@@ -234,7 +234,7 @@ foreach my $file (@filenames){
     $report =~ s/\.bam$//;
     $report =~ s/\.txt$//;
     if ($umi){
-	$report =~ s/$/.UMI.deduplication_report.txt/;
+	$report =~ s/$/.UMI_deduplication_report.txt/;
     }
     else{
 	$report =~ s/$/.deduplication_report.txt/;
@@ -318,235 +318,203 @@ foreach my $file (@filenames){
 	my ($strand,$chr,$start,$end,$cigar);
 	my $line1;
 	
-	if ($vanilla){
-	    ($strand,$chr,$start,$end) = (split (/\t/))[1,2,3,4];
-      }
-	else{ # SAM format
-	    ($strand,$chr,$start,$cigar) = (split (/\t/))[1,2,3,5]; # we are assigning the FLAG value to $strand
+	# BAM/SAM format
+	($strand,$chr,$start,$cigar) = (split (/\t/))[1,2,3,5]; # we are assigning the FLAG value to $strand
+	
+	### SAM single-end
+	if ($single){
 	    
-	    ### SAM single-end
-	    if ($single){
-		
-		if ($strand == 0 ){
-		    ### read aligned to the forward strand. No action needed
-		}
-		elsif ($strand == 16){
-		    ### read is on reverse strand
-		    $start -= 1; # only need to adjust this once
+	    if ($strand == 0 ){
+		### read aligned to the forward strand. No action needed
+	    }
+	    elsif ($strand == 16){
+		### read is on reverse strand
+		$start -= 1; # only need to adjust this once
 		    
-		    # for InDel free matches we can simply use the M number in the CIGAR string
-		    if ($cigar =~ /^(\d+)M$/){ # linear match
-			$start += $1;
-		    }
-		    else{
-			# parsing CIGAR string
-			my @len = split (/\D+/,$cigar); # storing the length per operation
-			my @ops = split (/\d+/,$cigar); # storing the operation
-			shift @ops; # remove the empty first element
-			die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
-			
-			# warn "CIGAR string; $cigar\n";
-			### determining end position of a read
-			foreach my $index(0..$#len){
-			    if ($ops[$index] eq 'M'){  # standard matching bases
-				$start += $len[$index];
-				# warn "Operation is 'M', adding $len[$index] bp\n";
-			    }
-			    elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
-				# warn "Operation is 'I', next\n";
-			    }
-			    elsif($ops[$index] eq 'D'){ # deletions do affect the end position
-				#  warn "Operation is 'D',adding $len[$index] bp\n";
-				$start += $len[$index];
-			    }
-			    elsif($ops[$index] eq 'N'){ # skipped regions (e.g. slipce junctions) do affect the end position
-				# warn "Operation is 'N',adding $len[$index] bp\n";
-				$start += $len[$index];
-			    }
-			    else{
-				die "Found CIGAR operations other than M, I or D: '$ops[$index]'. Not allowed at the moment\n";
-			    }
+		# for InDel free matches we can simply use the M number in the CIGAR string
+		if ($cigar =~ /^(\d+)M$/){ # linear match
+		    $start += $1;
+		}
+		else{
+		    # parsing CIGAR string
+		    my @len = split (/\D+/,$cigar); # storing the length per operation
+		    my @ops = split (/\d+/,$cigar); # storing the operation
+		    shift @ops; # remove the empty first element
+		    die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
+		    
+		    # warn "CIGAR string; $cigar\n";
+		    ### determining end position of a read
+		    foreach my $index(0..$#len){
+			if ($ops[$index] eq 'M'){  # standard matching bases
+			    $start += $len[$index];
+			    # warn "Operation is 'M', adding $len[$index] bp\n";
+			}
+			elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
+			    # warn "Operation is 'I', next\n";
+			}
+			elsif($ops[$index] eq 'D'){ # deletions do affect the end position
+			    #  warn "Operation is 'D',adding $len[$index] bp\n";
+			    $start += $len[$index];
+			}
+			elsif($ops[$index] eq 'N'){ # skipped regions (e.g. splice junctions) do affect the end position
+			    # warn "Operation is 'N',adding $len[$index] bp\n";
+			    $start += $len[$index];
+			}
+			else{
+			    die "Found CIGAR operations other than M, I or D: '$ops[$index]'. Not allowed at the moment\n";
 			}
 		    }
 		}
-		$composite = join (":",$strand,$chr,$start);
 	    }
-	    elsif($paired){
+	    $composite = join (":",$strand,$chr,$start);
+	}
+	elsif($paired){
+	    
+	    ### storing the current line
+	    $line1 = $_;
+	    my $flag = (split /\t/,$line1)[1];
+	    # if the read aligns in forward orientation we can certainly use the start position of read 1, and only need to work out the end position of read 2	
+	    if ($flag == 99){ # 99 is paired-end, properly paired, read first in pair, mate on reverse strand
 		
-		### storing the current line
-		$line1 = $_;
+		### reading in the next line
+		$_ = <IN>;
+		# the only thing we need is the end position
+		($end,my $cigar_2) = (split (/\t/))[3,5];
 		
-		my $read_conversion;
-		my $genome_conversion;
+		$end -= 1; # only need to adjust this once
 		
-		while ( /(XR|XG):Z:([^\t]+)/g ) {
-		    my $tag = $1;
-		    my $value = $2;
-		    
-		    if ($tag eq "XR") {
-			$read_conversion = $value;
-			$read_conversion =~ s/\r//;
-			chomp $read_conversion;
-		    } elsif ($tag eq "XG") {
-			$genome_conversion = $value;
-			$genome_conversion =~ s/\r//;
-			chomp $genome_conversion;
-		    }
-		}
-		die "Failed to determine read and genome conversion from line: $line1\n\n" unless ($read_conversion and $read_conversion);
-		
-		
-		my $index;
-		if ($read_conversion eq 'CT' and $genome_conversion eq 'CT') { ## original top strand
-		    $index = 0;
-		    $strand = '+';
-		} elsif ($read_conversion eq 'GA' and $genome_conversion eq 'CT') { ## complementary to original top strand
-		    $index = 1;
-		    $strand = '-';
-		} elsif ($read_conversion eq 'GA' and $genome_conversion eq 'GA') { ## complementary to original bottom strand
-		    $index = 2;
-		    $strand = '+';
-		} elsif ($read_conversion eq 'CT' and $genome_conversion eq 'GA') { ## original bottom strand
-		    $index = 3;
-		    $strand = '-';
-		} else {
-		    die "Unexpected combination of read and genome conversion: '$read_conversion' / '$genome_conversion'\n";
-		}
-		
-		# if the read aligns in forward orientation we can certainly use the start position of read 1, and only need to work out the end position of read 2	
-		if ($index == 0 or $index == 2){
-	      
-		    ### reading in the next line
-		    $_ = <IN>;
-		    # the only thing we need is the end position
-		    ($end,my $cigar_2) = (split (/\t/))[3,5];
-		    
-		    $end -= 1; # only need to adjust this once
-		    
-		    # for InDel free matches we can simply use the M number in the CIGAR string
-		    if ($cigar_2 =~ /^(\d+)M$/){ # linear match
-			$end += $1;
-		    }
-		    else{
-	      # parsing CIGAR string
-	      my @len = split (/\D+/,$cigar_2); # storing the length per operation
-	      my @ops = split (/\d+/,$cigar_2); # storing the operation
-	      shift @ops; # remove the empty first element
-	      die "CIGAR string contained a non-matching number of lengths and operations ($cigar_2)\n" unless (scalar @len == scalar @ops);
-	
-	      # warn "CIGAR string; $cigar_2\n";
-	      ### determining end position of the read
-	      foreach my $index(0..$#len){
-		if ($ops[$index] eq 'M'){  # standard matching bases
-		  $end += $len[$index];
-		  # warn "Operation is 'M', adding $len[$index] bp\n";
-		}
-		elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
-		  # warn "Operation is 'I', next\n";
-		}
-		elsif($ops[$index] eq 'D'){ # deletions do affect the end position
-		  #  warn "Operation is 'D',adding $len[$index] bp\n";
-		  $end += $len[$index];
+		# for InDel free matches we can simply use the M number in the CIGAR string
+		if ($cigar_2 =~ /^(\d+)M$/){ # linear match
+		    $end += $1;
 		}
 		else{
-		  die "Found CIGAR operations other than M, I or D: '$ops[$index]'. Not allowed at the moment\n";
+		    # parsing CIGAR string
+		    my @len = split (/\D+/,$cigar_2); # storing the length per operation
+		    my @ops = split (/\d+/,$cigar_2); # storing the operation
+		    shift @ops; # remove the empty first element
+		    die "CIGAR string contained a non-matching number of lengths and operations ($cigar_2)\n" unless (scalar @len == scalar @ops);
+		    
+		    # warn "CIGAR string; $cigar_2\n";
+		    ### determining end position of the read
+		    foreach my $index(0..$#len){
+			if ($ops[$index] eq 'M'){  # standard matching bases
+			    $end += $len[$index];
+			    # warn "Operation is 'M', adding $len[$index] bp\n";
+			}
+			elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
+			    # warn "Operation is 'I', next\n";
+			}
+			elsif($ops[$index] eq 'D'){ # deletions do affect the end position
+			    #  warn "Operation is 'D',adding $len[$index] bp\n";
+			    $end += $len[$index];
+			}
+			elsif($ops[$index] eq 'N'){ # skipped regions (e.g. splice junctions) do affect the end position
+			    #  warn "Operation is 'N',adding $len[$index] bp\n";
+			    $end += $len[$index];
+			}
+			else{
+			    die "Found CIGAR operations other than M, I, D or N: '$ops[$index]'. Not allowed at the moment\n";
+			}
+		    }
 		}
-	      }
 	    }
-	  }
-	  else{
-	    # else read 1 aligns in reverse orientation and we need to work out the end of the fragment first, and use the start of the next line
-
-	    $end = $start - 1; # need to adjust this only once
+	    elsif($flag == 83){ 
+		# Flag 83 is paired-end, properly paired, read reverse strand, first in pair
+		# else read 1 aligns in reverse orientation and we need to work out the end of the fragment first, and use the start of the next line
+		
+		$end = $start - 1; # need to adjust this only once
+		
+		# for InDel free matches we can simply use the M number in the CIGAR string
+		if ($cigar =~ /^(\d+)M$/){ # linear match
+		    $end += $1;
+		}
+		else{
+		    # parsing CIGAR string
+		    my @len = split (/\D+/,$cigar); # storing the length per operation
+		    my @ops = split (/\d+/,$cigar); # storing the operation
+		    shift @ops; # remove the empty first element
+		    die "CIGAR string contained a non-matching number of lengths and operations ($cigar)\n" unless (scalar @len == scalar @ops);
 	
-	    # for InDel free matches we can simply use the M number in the CIGAR string
-	    if ($cigar =~ /^(\d+)M$/){ # linear match
-	      $end += $1;
+		    # warn "CIGAR string; $cigar\n";
+		    ### determining end position of the read
+		    foreach my $index(0..$#len){
+			if ($ops[$index] eq 'M'){  # standard matching bases
+			    $end += $len[$index];
+			    # warn "Operation is 'M', adding $len[$index] bp\n";
+			}
+			elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
+			    # warn "Operation is 'I', next\n";
+			}
+			elsif($ops[$index] eq 'D'){ # deletions do affect the end position
+			    # warn "Operation is 'D',adding $len[$index] bp\n";
+			    $end += $len[$index];
+			}
+			elsif($ops[$index] eq 'N'){ # skipped regions such as splice junctions do affect the end position
+			    # warn "Operation is 'N',adding $len[$index] bp\n";
+			    $end += $len[$index];
+			}
+			else{
+			    die "Found CIGAR operations other than M, I, D or N: '$ops[$index]'. Not allowed at the moment\n";
+			}
+		    }
+		}
+		
+		### reading in the next line
+		$_ = <IN>;
+		# the only thing we need is the start position
+		($start) = (split (/\t/))[3];
 	    }
 	    else{
-	      # parsing CIGAR string
-	      my @len = split (/\D+/,$cigar); # storing the length per operation
-	      my @ops = split (/\d+/,$cigar); # storing the operation
-	      shift @ops; # remove the empty first element
-	      die "CIGAR string contained a non-matching number of lengths and operations ($cigar)\n" unless (scalar @len == scalar @ops);
-	
-	      # warn "CIGAR string; $cigar\n";
-	      ### determining end position of the read
-	      foreach my $index(0..$#len){
-		if ($ops[$index] eq 'M'){  # standard matching bases
-		  $end += $len[$index];
-		  # warn "Operation is 'M', adding $len[$index] bp\n";
-		}
-		elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
-		  # warn "Operation is 'I', next\n";
-		}
-		elsif($ops[$index] eq 'D'){ # deletions do affect the end position
-		  # warn "Operation is 'D',adding $len[$index] bp\n";
-		  $end += $len[$index];
-		}
-		else{
-		  die "Found CIGAR operations other than M, I or D: '$ops[$index]'. Not allowed at the moment\n";
-		}
-	      }
+		die "So far unhandled FLAG value: $flag. Please update UMI-BAM\n\n";
 	    }
-	
-	    ### reading in the next line
-	    $_ = <IN>;
-	    # the only thing we need is the start position
-	    ($start) = (split (/\t/))[3];
-	  }
-	  $composite = join (":",$strand,$chr,$start,$end);
+	    $composite = join (":",$strand,$chr,$start,$end);
 	}
-	
 	else{
-	  die "Input must be single or paired-end\n";
+	    die "Input must be single or paired-end\n";
 	}
-      }
-
-      if (exists $unique_seqs{$composite}){
-	++$removed;
-	unless (exists $positions{$composite}){
-	  $positions{$composite}++;
+    
+    	if (exists $unique_seqs{$composite}){
+	    ++$removed;
+	    unless (exists $positions{$composite}){
+		$positions{$composite}++;
+	    }
 	}
-      }
-      else{
-	if ($paired){
-	  unless ($vanilla){
-	    print OUT "$line1"; # printing first paired-end line for SAM output
-	  }
+	else{
+	    if ($paired){
+		print OUT "$line1"; # printing first paired-end line for SAM output
+	    }
+	    print OUT "$_"; # printing single-end SAM alignment or second paired-end line
+	    $unique_seqs{$composite}++;
 	}
-	print OUT "$_"; # printing single-end SAM alignment or second paired-end line
-	$unique_seqs{$composite}++;
-      }
     }
-
+    
     my $percentage;
     my $percentage_leftover;
     my $leftover = $count - $removed;
-
+    
     unless ($count == 0){
-      $percentage = sprintf("%.2f",$removed/$count*100);
-      $percentage_leftover = sprintf("%.2f",$leftover/$count*100);
+	$percentage = sprintf("%.2f",$removed/$count*100);
+	$percentage_leftover = sprintf("%.2f",$leftover/$count*100);
     }
     else{
-      $percentage = 'N/A';
-      $percentage_leftover = 'N/A';
+	$percentage = 'N/A';
+	$percentage_leftover = 'N/A';
     }
-
+    
     warn "\nTotal number of alignments analysed in $file:\t$count\n";
     warn "Total number duplicated alignments removed:\t$removed ($percentage%)\n";
     warn "Duplicated alignments were found at:\t",scalar keys %positions," different position(s)\n\n";
     warn "Total count of deduplicated leftover sequences: $leftover ($percentage_leftover% of total)\n\n";
-
+    
     print REPORT "\nTotal number of alignments analysed in $file:\t$count\n";
     print REPORT "Total number duplicated alignments removed:\t$removed ($percentage%)\n";
     print REPORT "Duplicated alignments were found at:\t",scalar keys %positions," different position(s)\n\n";
     print REPORT "Total count of deduplicated leftover sequences: $leftover ($percentage_leftover% of total)\n\n";
-  }
+    }
 
-  close OUT or warn "Failed to close output filehandle: $!\n";
-  close REPORT or warn "Failed to close report filehandle: $!\n";
-
+    close OUT or warn "Failed to close output filehandle: $!\n";
+    close REPORT or warn "Failed to close report filehandle: $!\n";
+    
 }
 
 
@@ -574,10 +542,10 @@ sub deduplicate_barcoded_umi{
     $outfile =~ s/\.txt$//;
     
     if ($bam == 1){
-	$outfile =~ s/$/.dedup_UMI.bam/;
+	$outfile =~ s/$/.UMI_deduplicated.bam/;
     }
     else{
-	$outfile =~ s/$/.dedup_UMI.sam/;
+	$outfile =~ s/$/.UMI_deduplicated.sam/;
     }
 
     if ($bam == 1){
@@ -587,21 +555,11 @@ sub deduplicate_barcoded_umi{
 	open (OUT,'>',$outfile) or die "Unable to write to $outfile: $!\n";
     }
     
-    ### This mode only supports Bismark SAM output
     my $count = 0;
     my $unique_seqs = 0;
     my $removed = 0;
 
     while (<IN>){
-
-	if ($count == 0){
-	    if ($_ =~ /^Bismark version:/){
-		warn "The file appears to be in the custom Bismark and not SAM format. Please see option --vanilla!\n";
-		sleep (2);
-		print_helpfile();
-		exit;
-	    }
-	}
 
 	### if this was a SAM file we ignore header lines
 	if (/^\@\w{2}\t/){
@@ -624,7 +582,7 @@ sub deduplicate_barcoded_umi{
 	my ($id,$strand,$chr,$start,$cigar) = (split (/\t/))[0,1,2,3,5]; # we are assigning the FLAG value to $strand
 	
 	$id =~ /:(\w+)$/;
-	my $umi = $1;
+	my $umi = $1; # this clashed with the UMI Option
 	#warn "$umi\n";
  	#sleep(1);
 
@@ -694,47 +652,10 @@ sub deduplicate_barcoded_umi{
 	    
 	    ### storing the current line
 	    $line1 = $_;
-	    
-	    my $read_conversion;
-	    my $genome_conversion;
-
-	    while ( /(XR|XG):Z:([^\t]+)/g ) {
-		my $tag = $1;
-		my $value = $2;
-		
-		if ($tag eq "XR") {
-		    $read_conversion = $value;
-		    $read_conversion =~ s/\r//;
-		    chomp $read_conversion;
-		}
-		elsif ($tag eq "XG") {
-		    $genome_conversion = $value;
-		    $genome_conversion =~ s/\r//;
-		    chomp $genome_conversion;
-		}
-	    }
-	    die "Failed to determine read and genome conversion from line: $line1\n\n" unless ($read_conversion and $read_conversion);
-	    
-	    
-	    my $index;
-	    if ($read_conversion eq 'CT' and $genome_conversion eq 'CT') { ## original top strand
-		$index = 0;
-		$strand = '+';
-	    } elsif ($read_conversion eq 'GA' and $genome_conversion eq 'CT') { ## complementary to original top strand
-		$index = 1;
-		$strand = '-';
-	    } elsif ($read_conversion eq 'GA' and $genome_conversion eq 'GA') { ## complementary to original bottom strand
-		$index = 2;
-		$strand = '+';
-	    } elsif ($read_conversion eq 'CT' and $genome_conversion eq 'GA') { ## original bottom strand
-		$index = 3;
-		$strand = '-';
-	    } else {
-		die "Unexpected combination of read and genome conversion: '$read_conversion' / '$genome_conversion'\n";
-	    }
+	    my $flag = (split /\t/,$line1)[1];
 	    
 	    # if the read aligns in forward orientation we can certainly use the start position of read 1, and only need to work out the end position of read 2	
-	    if ($index == 0 or $index == 2){
+	    if ($flag == 99){ # 99 is paired-end, properly paired, read first in pair, mate on reverse strand
 		
 		### reading in the next line
 		$_ = <IN>;
@@ -768,13 +689,18 @@ sub deduplicate_barcoded_umi{
 			    #  warn "Operation is 'D',adding $len[$index] bp\n";
 			    $end += $len[$index];
 			}
+			elsif($ops[$index] eq 'N'){ # skipped regions (e.g. splice junctions) do affect the end position
+                            #  warn "Operation is 'N',adding $len[$index] bp\n";
+                            $end += $len[$index];
+                        }
 			else{
 			    die "Found CIGAR operations other than M, I or D: '$ops[$index]'. Not allowed at the moment\n";
 			}
 		    }
 		}
 	    }
-	    else{
+	    elsif($flag == 83){
+		# Flag 83 is paired-end, properly paired, read reverse strand, first in pair
 		# else read 1 aligns in reverse orientation and we need to work out the end of the fragment first, and use the start of the next line
 		
 		$end = $start - 1; # need to adjust this only once
@@ -804,18 +730,24 @@ sub deduplicate_barcoded_umi{
 			    # warn "Operation is 'D',adding $len[$index] bp\n";
 			    $end += $len[$index];
 			}
+			elsif($ops[$index] eq 'N'){ # skipped regions such as splice junctions do affect the end position
+                            # warn "Operation is 'N',adding $len[$index] bp\n";
+                            $end += $len[$index];
+                        }
 			else{
 			    die "Found CIGAR operations other than M, I or D: '$ops[$index]'. Not allowed at the moment\n";
 			}
 		    }
 		}
-		
+	
 		### reading in the next line
 		$_ = <IN>;
 		# the only thing we need is the start position
 		($start) = (split (/\t/))[3];
 	    }
-	    
+	    else{
+		die "So far unhandled FLAG: $flag. Please update UMI-Bam\n\n";
+	    }    
 	    ### Here we take the barcode sequence into consideration
 	    $composite = join (":",$strand,$chr,$start,$end,$umi);
 	}
@@ -986,14 +918,16 @@ sub test_positional_sorting{
       next;
     }
     else{ ### in previous versions of Bismark we appended /1 and /2 to the read IDs for easier eyeballing which read is which. These tags need to be removed first
-      my $id_1_trunc = $id_1;
-      $id_1_trunc =~ s/\/1$//;
-      my $id_2_trunc = $id_2;
-      $id_2_trunc =~ s/\/2$//;
-
-      unless ($id_1_trunc eq $id_2_trunc){
-	die "\nThe IDs of Read 1 ($id_1) and Read 2 ($id_2) are not the same. This might be a result of sorting the paired-end SAM/BAM files by chromosomal position which is not compatible with correct methylation extraction. Please use an unsorted file instead (e.g. use samtools sort -n)\n\n";
-      }
+	my $id_1_trunc = $id_1;
+	$id_1_trunc =~ s/\/1$//;
+	$id_1_trunc =~ s/_\d:N:.*$//; # truncating to 1:N:0
+	my $id_2_trunc = $id_2;
+	$id_2_trunc =~ s/\/2$//; 
+	$id_2_trunc =~ s/_\d:N:.*$//; # truncating to 3:N:0
+	
+	unless ($id_1_trunc eq $id_2_trunc){
+	    die "\nThe IDs of Read 1 ($id_1) and Read 2 ($id_2) are not the same. This might be a result of sorting the paired-end SAM/BAM files by chromosomal position which is not compatible with correct methylation extraction. Please use an unsorted file instead (e.g. use samtools sort -n)\n\n";
+	}
     }
   }
   #  close TEST or die $!; somehow fails on our cluster...
