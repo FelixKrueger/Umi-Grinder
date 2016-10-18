@@ -251,7 +251,12 @@ foreach my $file (@filenames){
     $report =~ s/\.bam$//;
     $report =~ s/\.txt$//;
     if ($umi){
-	$report =~ s/$/.UMI_deduplication_report.txt/;
+	if ($mm){
+	    $report =~ s/$/.UMI_${mm}mm_deduplication_report.txt/;
+	}
+	else{
+	    $report =~ s/$/.UMI_deduplication_report.txt/;
+	}
     }
     else{
 	$report =~ s/$/.deduplication_report.txt/;
@@ -261,7 +266,12 @@ foreach my $file (@filenames){
     
 
     if($umi){
-	deduplicate_barcoded_umi($file);
+	if ($mm){
+	    deduplicate_barcoded_umi_with_mismatches($file,$mm);
+	}
+	else{
+	    deduplicate_barcoded_umi($file);
+	}
     }
     ### as the default option we simply write out the first read for a position and discard all others. This is the fastest option
     else{
@@ -575,9 +585,9 @@ sub deduplicate_barcoded_umi{
     my $count = 0;
     my $unique_seqs = 0;
     my $removed = 0;
-
+    
     while (<IN>){
-
+	
 	### if this was a SAM file we ignore header lines
 	if (/^\@\w{2}\t/){
 	    warn "skipping SAM header line:\t$_";
@@ -590,7 +600,7 @@ sub deduplicate_barcoded_umi{
 	### in this UMI mode we also store the read barcode (UMI) as additional means of assisting the deduplication
 	### in effect the $composite string looks like this (separated by ':'):
 	
-	### FLAG:chromosome:start:barcode
+	### FLAG:chromosome:start->{barcode}
 	
 	my $end;
 	my $line1;
@@ -600,8 +610,8 @@ sub deduplicate_barcoded_umi{
 	
 	$id =~ /:(\w+)$/;
 	my $umi = $1; # this clashed with the UMI Option
-	#warn "$umi\n";
- 	#sleep(1);
+	# warn "$umi\n";
+ 	# sleep(1);
 
 	if ($umi){
 	    if ($umi =~ /[^GATCNgatcn]/){
@@ -861,27 +871,27 @@ sub bam_isTruncated{
 
 
 sub print_helpfile{
-  print "\n",'='x111,"\n";
-  print "\nThis script is supposed to remove alignments to the same position in the genome from the Bismark mapping output\n(both single and paired-end SAM files), which can arise by e.g. excessive PCR amplification. If sequences align\nto the same genomic position but on different strands they will be scored individually.\n\nIn the default mode, the first alignment to a given position will be used irrespective of its methylation call\n(this is the fastest option, and as the alignments are not ordered in any way this is also near enough random).\n\n";
-  print "For single-end alignments only use the start coordinate of a read will be used for deduplication.\n\n";
-  print "For paired-end alignments the start-coordinate of the first read and the end coordinate of the second\nread will be used for deduplication. ";
-  print "*** Please note that for paired-end BAM files the deduplication script expects Read1 and Read2 to\nfollow each other in consecutive lines! If the file has been sorted by position make sure that you resort it\nby read name first (e.g. using samtools sort -n)  ***\n\n";
+    print "\n",'='x111,"\n";
+    print "\nThis script is supposed to remove alignments to the same position in the genome from the Bismark mapping output\n(both single and paired-end SAM files), which can arise by e.g. excessive PCR amplification. If sequences align\nto the same genomic position but on different strands they will be scored individually.\n\nIn the default mode, the first alignment to a given position will be used irrespective of its methylation call\n(this is the fastest option, and as the alignments are not ordered in any way this is also near enough random).\n\n";
+    print "For single-end alignments only use the start coordinate of a read will be used for deduplication.\n\n";
+    print "For paired-end alignments the start-coordinate of the first read and the end coordinate of the second\nread will be used for deduplication. ";
+    print "*** Please note that for paired-end BAM files the deduplication script expects Read1 and Read2 to\nfollow each other in consecutive lines! If the file has been sorted by position make sure that you resort it\nby read name first (e.g. using samtools sort -n)  ***\n\n";
 
-  print '='x111,"\n\n";
-  print ">>> USAGE: ./deduplicate_bismark_alignment_output.pl [options] filename(s) <<<\n\n";
+    print '='x111,"\n\n";
+    print ">>> USAGE: ./deduplicate_bismark_alignment_output.pl [options] filename(s) <<<\n\n";
+    
+    print "-s/--single\t\tdeduplicate single-end Bismark files (default format: SAM)\n";
+    print "-p/--paired\t\tdeduplicate paired-end Bismark files (default format: SAM)\n\n";
+    print "--vanilla\t\tThe input file is in the old custom Bismark format and not in SAM format\n\n";
+    print "--umi\t\t\tIn addition to chromosome, start position and orientation this will also take a potential UMI into\n                        consideration while deduplicating. The barcode needs to be the last element of the read ID and separated\n                        by a ':', e.g.: MISEQ:14:000000000-A55D0:1:1101:18024:2858_1:N:0:CTCCT\n\n";
+    print "--mm/--mismatches <INT>\tNumber of mismatches tolerated in the UMI. If a sequence has the same edit (hemming) distance to\n\t\t\tseveral different UMIs the read will be regarded as a duplicate and discarded. Currently allowed\n\t\t\tmaximum of --mm is 1. Default: 0.\n\n";
+    print "--bam\t\t\tThe output will be written out in BAM format instead of the default SAM format. This script will\n\t\t\tattempt to use the path to Samtools that was specified with '--samtools_path', or, if it hasn't\n\t\t\tbeen specified, attempt to find Samtools in the PATH. If no installation of Samtools can be found,\n\t\t\tthe SAM output will be compressed with GZIP instead (yielding a .sam.gz output file)\n\n";
+    print "--samtools_path\t\tThe path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified\n\t\t\texplicitly if Samtools is in the PATH already\n\n";
+    print "--version\t\tPrint version information and exit\n";
 
-  print "-s/--single\t\tdeduplicate single-end Bismark files (default format: SAM)\n";
-  print "-p/--paired\t\tdeduplicate paired-end Bismark files (default format: SAM)\n\n";
-  print "--vanilla\t\tThe input file is in the old custom Bismark format and not in SAM format\n\n";
-  print "--umi\t\t\tIn addition to chromosome, start position and orientation this will also take a potential UMI into\n                        consideration while deduplicating. The barcode needs to be the last element of the read ID and separated\n                        by a ':', e.g.: MISEQ:14:000000000-A55D0:1:1101:18024:2858_1:N:0:CTCCT\n\n";
-  print "--mm/--mismatches <INT>\tNumber of mismatches tolerated in the UMI. If a sequence has the same edit (hemming) distance to\n\t\t\tseveral different UMIs the read will be regarded as a duplicate and discarded. Currently allowed\n\t\t\tmaximum of --mm is 1. Default: 0.\n\n";
-  print "--bam\t\t\tThe output will be written out in BAM format instead of the default SAM format. This script will\n\t\t\tattempt to use the path to Samtools that was specified with '--samtools_path', or, if it hasn't\n\t\t\tbeen specified, attempt to find Samtools in the PATH. If no installation of Samtools can be found,\n\t\t\tthe SAM output will be compressed with GZIP instead (yielding a .sam.gz output file)\n\n";
-  print "--samtools_path\t\tThe path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified\n\t\t\texplicitly if Samtools is in the PATH already\n\n";
-  print "--version\t\tPrint version information and exit\n";
-
-  print '='x111,"\n\n";
-
-  print "This script was last modified on October 17, 2016\n\n";
+    print '='x111,"\n\n";
+    
+    print "This script was last modified on October 18, 2016\n\n";
 }
 
 
@@ -889,96 +899,96 @@ sub print_helpfile{
 
 sub test_positional_sorting{
 
-  my $filename = shift;
+    my $filename = shift;
+    
+    print "\nNow testing Bismark result file $filename for positional sorting (which would be bad...)\t";
+    sleep(1);
 
-  print "\nNow testing Bismark result file $filename for positional sorting (which would be bad...)\t";
-  sleep(1);
-
-  if ($filename =~ /\.gz$/) {
-    open (TEST,"gunzip -c $filename |") or die "Can't open gzipped file $filename: $!\n";
-  }
-  elsif ($filename =~ /bam$/ ||  isBam($filename) ){ ### this would allow to read BAM files that do not end in *.bam
-    if ($samtools_path){
-      open (TEST,"$samtools_path view -h $filename |") or die "Can't open BAM file $filename: $!\n";
+    if ($filename =~ /\.gz$/) {
+	open (TEST,"gunzip -c $filename |") or die "Can't open gzipped file $filename: $!\n";
     }
-    else{
-      die "Sorry couldn't find an installation of Samtools. Either specifiy an alternative path using the option '--samtools_path /your/path/', or use a SAM file instead\n\n";
-    }
-  }
-  else {
-    open (TEST,$filename) or die "Can't open file $filename: $!\n";
-  }
-
-  my $count = 0;
-
-  while (<TEST>) {
-    if (/^\@/) {	     # testing header lines if they contain the @SO flag (for being sorted)
-      if (/^\@SO/) {
-	die "SAM/BAM header line '$_' indicates that the Bismark aligment file has been sorted by chromosomal positions which is is incompatible with correct methylation extraction. Please use an unsorted file instead (e.g. use samtools sort -n)\n\n";
-      }
-      next;
-    }
-    $count++;
-
-    last if ($count > 100000); # else we test the first 100000 sequences if they start with the same read ID
-
-    my ($id_1) = (split (/\t/));
-
-    ### reading the next line which should be read 2
-    $_ = <TEST>;
-    my ($id_2) = (split (/\t/));
-    last unless ($id_2);
-    ++$count;
-
-    if ($id_1 eq $id_2){
-      ### ids are the same
-      next;
-    }
-    else{ ### in previous versions of Bismark we appended /1 and /2 to the read IDs for easier eyeballing which read is which. These tags need to be removed first
-	my $id_1_trunc = $id_1;
-	$id_1_trunc =~ s/\/1$//;
-	$id_1_trunc =~ s/_\d:N:.*$//; # truncating to 1:N:0
-	my $id_2_trunc = $id_2;
-	$id_2_trunc =~ s/\/2$//; 
-	$id_2_trunc =~ s/_\d:N:.*$//; # truncating to 3:N:0
-	
-	unless ($id_1_trunc eq $id_2_trunc){
-	    die "\nThe IDs of Read 1 ($id_1) and Read 2 ($id_2) are not the same. This might be a result of sorting the paired-end SAM/BAM files by chromosomal position which is not compatible with correct methylation extraction. Please use an unsorted file instead (e.g. use samtools sort -n)\n\n";
+    elsif ($filename =~ /bam$/ ||  isBam($filename) ){ ### this would allow to read BAM files that do not end in *.bam
+	if ($samtools_path){
+	    open (TEST,"$samtools_path view -h $filename |") or die "Can't open BAM file $filename: $!\n";
+	}
+	else{
+	    die "Sorry couldn't find an installation of Samtools. Either specifiy an alternative path using the option '--samtools_path /your/path/', or use a SAM file instead\n\n";
 	}
     }
-  }
-  #  close TEST or die $!; somehow fails on our cluster...
-  ### If it hasen't died so far then it seems the file is in the correct Bismark format (read 1 and read 2 of a pair directly following each other)
-  warn "...passed!\n";
-  sleep(1);
-
+    else {
+	open (TEST,$filename) or die "Can't open file $filename: $!\n";
+    }
+    
+    my $count = 0;
+    
+    while (<TEST>) {
+	if (/^\@/) {	     # testing header lines if they contain the @SO flag (for being sorted)
+	    if (/^\@SO/) {
+		die "SAM/BAM header line '$_' indicates that the Bismark aligment file has been sorted by chromosomal positions which is is incompatible with correct methylation extraction. Please use an unsorted file instead (e.g. use samtools sort -n)\n\n";
+	    }
+	    next;
+	}
+	$count++;
+	
+	last if ($count > 100000); # else we test the first 100000 sequences if they start with the same read ID
+	
+	my ($id_1) = (split (/\t/));
+	
+	### reading the next line which should be read 2
+	$_ = <TEST>;
+	my ($id_2) = (split (/\t/));
+	last unless ($id_2);
+	++$count;
+	
+	if ($id_1 eq $id_2){
+	    ### ids are the same
+	    next;
+	}
+	else{ ### in previous versions of Bismark we appended /1 and /2 to the read IDs for easier eyeballing which read is which. These tags need to be removed first
+	    my $id_1_trunc = $id_1;
+	    $id_1_trunc =~ s/\/1$//;
+	    $id_1_trunc =~ s/_\d:N:.*$//; # truncating to 1:N:0
+	    my $id_2_trunc = $id_2;
+	    $id_2_trunc =~ s/\/2$//; 
+	    $id_2_trunc =~ s/_\d:N:.*$//; # truncating to 3:N:0
+	    
+	    unless ($id_1_trunc eq $id_2_trunc){
+		die "\nThe IDs of Read 1 ($id_1) and Read 2 ($id_2) are not the same. This might be a result of sorting the paired-end SAM/BAM files by chromosomal position which is not compatible with correct methylation extraction. Please use an unsorted file instead (e.g. use samtools sort -n)\n\n";
+	    }
+    }
+    }
+    #  close TEST or die $!; somehow fails on our cluster...
+    ### If it hasen't died so far then it seems the file is in the correct Bismark format (read 1 and read 2 of a pair directly following each other)
+    warn "...passed!\n";
+    sleep(1);
+    
 }
 
 sub isBam{
 
-  my $filename = shift;
+    my $filename = shift;
+    
+    # reading the first line of the input file to see if it is a BAM file in disguise (i.e. a BAM file that does not end in *.bam which may be produced by Galaxy)
+    open (DISGUISE,"gunzip -c $filename |") or die "Failed to open filehandle DISGUISE for $filename\n\n";
 
-  # reading the first line of the input file to see if it is a BAM file in disguise (i.e. a BAM file that does not end in *.bam which may be produced by Galaxy)
-  open (DISGUISE,"gunzip -c $filename |") or die "Failed to open filehandle DISGUISE for $filename\n\n";
-
-  ### when BAM files read through a gunzip -c stream they start with BAM...
-  my $bam_in_disguise = <DISGUISE>;
-  # warn "BAM in disguise: $bam_in_disguise\n\n";
-
-  if ($bam_in_disguise){
-    if ($bam_in_disguise =~ /^BAM/){
-      close (DISGUISE) or warn "Had trouble closing filehandle BAM in disguise: $!\n";
-      return 1;
+    ### when BAM files read through a gunzip -c stream they start with BAM...
+    my $bam_in_disguise = <DISGUISE>;
+    # warn "BAM in disguise: $bam_in_disguise\n\n";
+    
+    if ($bam_in_disguise){
+	if ($bam_in_disguise =~ /^BAM/){
+	    close (DISGUISE) or warn "Had trouble closing filehandle BAM in disguise: $!\n";
+	    return 1;
+	}
+	else{
+	    close (DISGUISE) or warn "Had trouble closing filehandle BAM in disguise: $!\n";
+	    return 0;
+	}
     }
     else{
-      close (DISGUISE) or warn "Had trouble closing filehandle BAM in disguise: $!\n";
-     return 0;
+	close (DISGUISE) or warn "Had trouble closing filehandle BAM in disguise: $!\n";
+	return 0;
     }
-  }
-  else{
-    close (DISGUISE) or warn "Had trouble closing filehandle BAM in disguise: $!\n";
-    return 0;
-  }
 }
 
 
@@ -986,42 +996,377 @@ sub isBam{
 
 sub get_edit_distance {
     
-    my ($seq) = @_;
+    my ($seq,$umi_seq) = @_;
+    my @seq     = split(//,$seq);
+    my @umi_seq = split(//,$umi_seq);
     
-    my @seq = split(//,$seq->{seq});
-    my @quality = split(//,$seq->{qual});
-    # print "seq: $seq->{seq}\n";
-    # print "bait:";
-    # print  join ('',@bait),"\n\n";
+    # print "seq    : ";
+    # print  join ('',@seq),"\n";
+    # print "UMI-Seq: ";
+    # print  join ('',@umi_seq),"\n\n";
     
     my $n_count = 0;
     my $match_count = 0;
     my $mismatch_count = 0;
     
-    for my $index (0..$#bait) {
+    for my $index (0..$#umi_seq) {
 	
 	last if ($index > $#seq);
 	
-	last if ($quality[$index] eq '#'); # Quality is rubbish
-	
-	if ($seq[$index] eq 'N') {
+	if ($umi_seq[$index] eq 'N') {
 	    ++$n_count;
 	}
-	elsif ($seq[$index] eq $bait[$index]) {
+	elsif ($umi_seq[$index] eq $seq[$index]) {
 	    ++$match_count;
 	}
 	else {
 	    ++$mismatch_count;
 	}
     }
+    # warn "match count:    $match_count\nN count:        $n_count\nmismatch count: $mismatch_count\n";
+    my $edit_dist = length($umi_seq) - $match_count;
+    return $edit_dist;
+}
+
+
+sub deduplicate_barcoded_umi_with_mismatches{
+
+    my ($file,$mm) = @_;
     
-    # warn "match count: $match_count\nN count: $n_count\nmismatch count: $mismatch_count\n";
+    my %unique_seqs;
+    my %positions;
     
-    # some element of the sequence is rubbish
-    if ($match_count < scalar @bait or $n_count > 2 or $mismatch_count > 1) {
-	return 0;
+    if ($file =~ /\.gz$/){
+	open (IN,"gunzip -c $file |") or die "Unable to read from gzipped file $file: $!\n";
+    }
+    elsif ($file =~ /\.bam$/){
+	open (IN,"$samtools_path view -h $file |") or die "Unable to read from BAM file $file: $!\n";
     }
     else{
-	return 1;
+	open (IN,$file) or die "Unable to read from $file: $!\n";
     }
+    
+    my $outfile = $file;
+    $outfile =~ s/\.gz$//;
+    $outfile =~ s/\.sam$//;
+    $outfile =~ s/\.bam$//;
+    $outfile =~ s/\.txt$//;
+    
+    if ($bam == 1){
+	$outfile =~ s/$/.UMI_${mm}mm_deduplicated.bam/;
+    }
+    else{
+	$outfile =~ s/$/.UMI_${mm}mm_deduplicated.sam/;
+    }
+
+    if ($bam == 1){
+	open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $outfile") or die "Failed to write to $outfile: $!\n";
+    }
+    else{
+	open (OUT,'>',$outfile) or die "Unable to write to $outfile: $!\n";
+    }
+    warn "UMI deduplication mode allowing $mm mismatches\n\n"; sleep(3);
+
+    my $count = 0;
+    my $unique_seqs = 0;
+    my $removed = 0;
+    
+    while (<IN>){
+	
+	### if this was a SAM file we ignore header lines
+	if (/^\@\w{2}\t/){
+	    warn "skipping SAM header line:\t$_";
+	    print OUT; # Printing the header lines again into the de-duplicated file
+	    next;
+	}
+
+	++$count;
+	my $composite; # storing positional data. For single end data we are only using the start coordinate since the end might have been trimmed to different lengths
+	### in this UMI mode we also store the read barcode (UMI) as additional means of assisting the deduplication
+	### in effect the $composite string looks like this (separated by ':'):
+	
+	### FLAG:chromosome:start->{barcode}
+	
+	my $end;
+	my $line1;
+	
+	# SAM format
+	my ($id,$strand,$chr,$start,$cigar) = (split (/\t/))[0,1,2,3,5]; # we are assigning the FLAG value to $strand
+	
+	$id =~ /:(\w+)$/;
+	my $umi_seq = $1; # this clashed with the UMI Option
+	# warn "$umi_seq\n";
+ 	# sleep(1);
+	
+	if ($umi_seq){
+	    if ($umi_seq =~ /[^GATCNgatcn]/){
+		die "Failed to extract a UMI that looks like a DNA sequence: $umi (last element of each read ID needs to be the UMI sequence, e.g. ':CATGAT'\n\n";
+	    }
+	}
+	else{
+	    die "Failed to extract a UMI from the read ID (last element of each read ID needs to be the UMI sequence, e.g. ':CATGAT'\n\n";
+	}
+	
+	### SAM single-end
+	if ($single){
+	    
+	    if ($strand == 0 ){
+		### read aligned to the forward strand. No action needed
+	    }
+	    elsif ($strand == 16){
+		### read is on reverse strand
+		
+		### ignoring reverse reads for the moment
+		
+		$start -= 1; # only need to adjust this once
+		
+		# for InDel free matches we can simply use the M number in the CIGAR string
+		if ($cigar =~ /^(\d+)M$/){ # linear match
+		    $start += $1;
+		}
+		else{
+		    # parsing CIGAR string
+		    my @len = split (/\D+/,$cigar); # storing the length per operation
+		    my @ops = split (/\d+/,$cigar); # storing the operation
+		    shift @ops; # remove the empty first element
+		    die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
+		    
+		    # warn "CIGAR string; $cigar\n";
+		    ### determining end position of a read
+		    foreach my $index(0..$#len){
+			if ($ops[$index] eq 'M'){  # standard matching bases
+			    $start += $len[$index];
+			    # warn "Operation is 'M', adding $len[$index] bp\n";
+			}
+			elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
+			    # warn "Operation is 'I', next\n";
+			}
+			elsif($ops[$index] eq 'D'){ # deletions do affect the end position
+			    #  warn "Operation is 'D', adding $len[$index] bp\n";
+			    $start += $len[$index];
+			}
+			elsif ($ops[$index] eq 'N'){  # splice junctions are similar to deletions and do count towards the end position
+			    # warn "Operation is 'N', adding $len[$index] bp\n";
+			    $start += $len[$index];
+			}
+			else{
+			    die "Found CIGAR operations other than M, I or D: '$ops[$index]'. Not allowed at the moment\n";
+			}
+		    }
+		}
+	    }
+	    
+	    ### Here we take the barcode sequence into consideration
+	    $composite = join (":",$strand,$chr,$start);
+	    # warn "$composite\n"; sleep(1);
+	    
+	    $count++;
+	    if (exists $positions{$composite}->{$umi_seq}){
+		# warn "Position $composite with UMI $umi_seq already existed - skipping...\n"; 
+		++$removed;
+	    }
+	    else{
+		$positions{$composite}->{$umi_seq}->{alignment} = $_;
+		# warn "Position $composite with UMI $umi_seq is new - adding...\n";
+	    }
+
+	}
+	elsif($paired){
+	    
+	    ### storing the current line
+	    $line1 = $_;
+	    my $flag = (split /\t/,$line1)[1];
+	    
+	    # if the read aligns in forward orientation we can certainly use the start position of read 1, and only need to work out the end position of read 2	
+	    if ($flag == 99){ # 99 is paired-end, properly paired, read first in pair, mate on reverse strand
+		
+		### reading in the next line
+		$_ = <IN>;
+		# the only thing we need is the end position
+		($end,my $cigar_2) = (split (/\t/))[3,5];
+
+		$end -= 1; # only need to adjust this once
+		
+		# for InDel free matches we can simply use the M number in the CIGAR string
+		if ($cigar_2 =~ /^(\d+)M$/){ # linear match
+		    $end += $1;
+		}
+		else{
+		    # parsing CIGAR string
+		    my @len = split (/\D+/,$cigar_2); # storing the length per operation
+		    my @ops = split (/\d+/,$cigar_2); # storing the operation
+		    shift @ops; # remove the empty first element
+		    die "CIGAR string contained a non-matching number of lengths and operations ($cigar_2)\n" unless (scalar @len == scalar @ops);
+		    
+		    # warn "CIGAR string; $cigar_2\n";
+		    ### determining end position of the read
+		    foreach my $index(0..$#len){
+			if ($ops[$index] eq 'M'){  # standard matching bases
+			    $end += $len[$index];
+			    # warn "Operation is 'M', adding $len[$index] bp\n";
+			}
+			elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
+			    # warn "Operation is 'I', next\n";
+			}
+			elsif($ops[$index] eq 'D'){ # deletions do affect the end position
+			    #  warn "Operation is 'D',adding $len[$index] bp\n";
+			    $end += $len[$index];
+			}
+			elsif($ops[$index] eq 'N'){ # skipped regions (e.g. splice junctions) do affect the end position
+                            #  warn "Operation is 'N',adding $len[$index] bp\n";
+                            $end += $len[$index];
+                        }
+			else{
+			    die "Found CIGAR operations other than M, I or D: '$ops[$index]'. Not allowed at the moment\n";
+			}
+		    }
+		}
+	    }
+	    elsif($flag == 83){
+		# Flag 83 is paired-end, properly paired, read reverse strand, first in pair
+		# else read 1 aligns in reverse orientation and we need to work out the end of the fragment first, and use the start of the next line
+		
+		$end = $start - 1; # need to adjust this only once
+		
+		# for InDel free matches we can simply use the M number in the CIGAR string
+		if ($cigar =~ /^(\d+)M$/){ # linear match
+		    $end += $1;
+		}
+		else{
+		    # parsing CIGAR string
+		    my @len = split (/\D+/,$cigar); # storing the length per operation
+		    my @ops = split (/\d+/,$cigar); # storing the operation
+		    shift @ops; # remove the empty first element
+		    die "CIGAR string contained a non-matching number of lengths and operations ($cigar)\n" unless (scalar @len == scalar @ops);
+		    
+		    # warn "CIGAR string; $cigar\n";
+		    ### determining end position of the read
+		    foreach my $index(0..$#len){
+			if ($ops[$index] eq 'M'){  # standard matching bases
+			    $end += $len[$index];
+			    # warn "Operation is 'M', adding $len[$index] bp\n";
+			}
+			elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
+			    # warn "Operation is 'I', next\n";
+			}
+			elsif($ops[$index] eq 'D'){ # deletions do affect the end position
+			    # warn "Operation is 'D',adding $len[$index] bp\n";
+			    $end += $len[$index];
+			}
+			elsif($ops[$index] eq 'N'){ # skipped regions such as splice junctions do affect the end position
+                            # warn "Operation is 'N',adding $len[$index] bp\n";
+                            $end += $len[$index];
+                        }
+			else{
+			    die "Found CIGAR operations other than M, I or D: '$ops[$index]'. Not allowed at the moment\n";
+			}
+		    }
+		}
+	
+		### reading in the next line
+		$_ = <IN>;
+		# the only thing we need is the start position
+		($start) = (split (/\t/))[3];
+	    }
+	    else{
+		die "So far unhandled FLAG: $flag. Please update UMI-Bam\n\n";
+	    }    
+	    ### Here we take the barcode sequence into consideration
+	    $composite = join (":",$strand,$chr,$start,$end);
+	    
+	    ###################################
+	    ### PAIRED-END
+	    $count++;
+	    
+	    # SAM PAIRED-END
+	    $positions{$composite}->{$umi_seq}->{alignment_1} = $line1;
+	    $positions{$composite}->{$umi_seq}->{alignment_2} = $_;
+	}
+	else{
+	    die "Input must be single or paired-end\n";
+	}
+	
+    }
+
+    ### PRINTING RESULTS
+    
+    ### Now going through all stored positions and printing out sequences with unique UMIs, or UMIs with an edit distance < $mm
+    warn "Now printing out alignments with unique UMIs\n";
+    sleep(1);
+  POS:    foreach my $pos (keys %positions){
+      my @umis; # storing UMIs that are considered unique for this given position
+      # warn "$pos\n";
+      
+      ### Looping through all sequences to see if they are very different to other sequences for this position (using a hemming distance, mismatches only, no indels)
+    UMI:	foreach my $umi_seq (keys %{$positions{$pos}}){
+	# warn "Current UMI: $umi_seq\n";
+	unless (@umis){
+	    # warn "Adding first UMI to the unique UMI array\n";
+	    push @umis, $umi_seq;
+	    next UMI;
+	}
+	my $umi_too_close = 0;
+	
+	foreach my $seq(@umis){
+	    my $edit_dist = get_edit_distance($seq,$umi_seq);
+	    # warn "UMI-seq:      $umi_seq\nPrevious-seq: $seq\nEdit distance: $edit_dist\n";
+	    if ($edit_dist <= $mm){
+		# warn "Sequence seems to closely related to already existing sequence(s). Chucking...\n";
+		$umi_too_close++;
+		last; # one fail is quite enough
+	    }
+	}
+	
+	unless ($umi_too_close){
+	    # warn "Adding UMI to the unique UMI array\n";
+	    push @umis, $umi_seq;
+	    ++$removed;
+	}
+	    
+		
+	# $unique_seqs++;
+	# last; ### exiting once we printed a sequence with the most frequent methylation call for a position
+    }
+      
+      ### Printing
+      if ($paired){
+	  foreach my $uniq_umi(@umis){
+	      # print $positions{$pos}->{$uniq_umi}->{alignment_1}; # SAM read 1
+	      # print $positions{$pos}->{$uniq_umi}->{alignment_2}; # SAM read 2
+	  }
+      }
+      else{ # single-end
+	  foreach my $uniq_umi(@umis){
+	      # warn "printing alignment for UMI: $uniq_umi\n";
+	      print OUT $positions{$pos}->{$uniq_umi}->{alignment};
+	  }
+	  # warn "#####\n";
+	  # print $positions{$pos}->{$meth_call}->{alignment};
+      }
+      # warn "~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n";sleep(1);
+  }
+    
+    my $percentage;
+    my $percentage_leftover;
+    my $leftover = $count - $removed;
+    
+    unless ($count == 0){
+	$percentage = sprintf("%.2f",$removed/$count*100);
+	$percentage_leftover = sprintf("%.2f",$leftover/$count*100);
+    }
+    else{
+	$percentage = 'N/A';
+	$percentage_leftover = 'N/A';
+    }
+    
+    
+    warn "\nTotal number of alignments analysed in $file:\t$count\n";
+    warn "Total number duplicated alignments removed:\t$removed ($percentage%)\n";
+    warn "Duplicated alignments were found at:\t",scalar keys %positions," different position(s)\n\n";
+    warn "Total count of deduplicated leftover sequences: $leftover ($percentage_leftover% of total)\n\n";
+    
+    print REPORT "\nTotal number of alignments analysed in $file:\t$count\n";
+    print REPORT "Total number duplicated alignments removed:\t$removed ($percentage%)\n";
+    print REPORT "Duplicated alignments were found at:\t",scalar keys %positions," different position(s)\n\n";
+    print REPORT "Total count of deduplicated leftover sequences: $leftover ($percentage_leftover% of total)\n\n";
 }
