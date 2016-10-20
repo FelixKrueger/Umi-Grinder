@@ -70,6 +70,7 @@ unless (@filenames){
 ### OPTIONS
  
 if ($double_umi){
+    warn "Setting --umi as well\n";
     $umi = 1; # setting $umi as well
 }
 
@@ -628,7 +629,11 @@ sub deduplicate_barcoded_umi{
 	    $id =~ /:(\w+)$/;  
 	    $umi_seq = $1;
 	}
-	# warn "$umi_seq\n"; leep(1);
+	
+	if ($paired){
+	    # warn "paired-end mode\n"
+	}
+	# warn "$umi_seq\n"; sleep(1);
 
 	if ($umi_seq){
 	    if ($umi_seq =~ /[^GATCNgatcn]/){
@@ -793,7 +798,7 @@ sub deduplicate_barcoded_umi{
 		die "So far unhandled FLAG: $flag. Please update UMI-Bam\n\n";
 	    }    
 	    ### Here we take the barcode sequence into consideration
-	    $composite = join (":",$strand,$chr,$start,$end,$umi);
+	    $composite = join (":",$strand,$chr,$start,$end,$umi_seq);
 	}
 	else{
 	    die "Input must be single or paired-end\n";
@@ -1099,7 +1104,6 @@ sub deduplicate_barcoded_umi_with_mismatches{
 	    next;
 	}
 
-	++$count;
 	my $composite; # storing positional data. For single end data we are only using the start coordinate since the end might have been trimmed to different lengths
 	### in this UMI mode we also store the read barcode (UMI) as additional means of assisting the deduplication
 	### in effect the $composite string looks like this (separated by ':'):
@@ -1324,8 +1328,8 @@ sub deduplicate_barcoded_umi_with_mismatches{
     ### PRINTING RESULTS
     
     ### Now going through all stored positions and printing out sequences with unique UMIs, or UMIs with an edit distance < $mm
-    warn "Now printing out alignments with unique UMIs\n"; 
-
+    warn "Now printing out alignments with unique UMIs (UMIs closer than or equal to an edit distance of >>$mm<< are considered duplicates)\n"; 
+    
   POS:    foreach my $pos (keys %positions){
       my @umis; # storing UMIs that are considered unique for this given position
       # warn "$pos\n";
