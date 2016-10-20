@@ -68,6 +68,12 @@ unless (@filenames){
 
 
 ### OPTIONS
+ 
+if ($double_umi){
+    $umi = 1; # setting $umi as well
+}
+
+
 unless ($global_single or $global_paired){
     if ($vanilla){
 	die "Please specify either -s (single-end) or -p (paired-end) for deduplication. Reading this information from the \@PG header line only works for SAM/BAM files\n\n";
@@ -610,14 +616,23 @@ sub deduplicate_barcoded_umi{
 	# SAM format
 	my ($id,$strand,$chr,$start,$cigar) = (split (/\t/))[0,1,2,3,5]; # we are assigning the FLAG value to $strand
 	
-	$id =~ /:(\w+)$/;
-	my $umi = $1; # this clashed with the UMI Option
-	# warn "$umi\n";
- 	# sleep(1);
+	my $umi_seq; 
 
-	if ($umi){
-	    if ($umi =~ /[^GATCNgatcn]/){
-		die "Failed to extract a UMI that looks like a DNA sequence: $umi (last element of each read ID needs to be the UMI sequence, e.g. ':CATGAT'\n\n";
+	if ($double_umi){
+	    $id =~ /:R1:(\w+):R2:(\w+):.*$/; # adapting for Tom's barcodes, possibly subject to change
+	    my $umi1 = $1;
+	    my $umi2 = $2;
+	    $umi_seq = $umi1.$umi2;
+	}
+	else{
+	    $id =~ /:(\w+)$/;  
+	    $umi_seq = $1;
+	}
+	# warn "$umi_seq\n"; leep(1);
+
+	if ($umi_seq){
+	    if ($umi_seq =~ /[^GATCNgatcn]/){
+		die "Failed to extract a UMI that looks like a DNA sequence: $umi_seq (last element of each read ID needs to be the UMI sequence, e.g. ':CATGAT'\n\n";
 	    }
 	}
 	else{
@@ -895,7 +910,7 @@ sub print_helpfile{
 
     print '='x111,"\n\n";
     
-    print "This script was last modified on October 19, 2016\n\n";
+    print "This script was last modified on October 20, 2016\n\n";
 }
 
 
@@ -1097,8 +1112,8 @@ sub deduplicate_barcoded_umi_with_mismatches{
 	# SAM format
 	my ($id,$strand,$chr,$start,$cigar) = (split (/\t/))[0,1,2,3,5]; # we are assigning the FLAG value to $strand
 	
-	$id =~ /:(\w+)$/;
 	my $umi_seq;
+	
 	if ($double_umi){
 	    $id =~ /:R1:(\w+):R2:(\w+):.*$/; # adapting for Tom's barcodes
 	    my $umi1 = $1;
@@ -1106,6 +1121,7 @@ sub deduplicate_barcoded_umi_with_mismatches{
 	    $umi_seq = $umi1.$umi2;
 	}
 	else{
+	    $id =~ /:(\w+)$/; # taking the last element after the :
 	    $umi_seq = $1;
 	}
 	# warn "$umi_seq\n"; 	 sleep(1);
