@@ -6,4 +6,4 @@ As Unique Molecule Identifiers (UMIs) become more and more frequently used for s
 Credits
 =====
 
-Umi-BAM was written by Felix Krueger, as part of the [Babraham Bioinformatics](https://www.bioinformatics.babraham.ac.uk/projects/sherman/) group.
+Umi-BAM was written by Felix Krueger, as part of the [Babraham Bioinformatics](https://www.bioinformatics.babraham.ac.uk/) group.
