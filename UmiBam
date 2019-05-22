@@ -89,7 +89,7 @@ if ($global_paired){
     if ($vanilla){
 	
 	if ($umi){
-	    die "Barcode deduplication only works with BAM outpu\n";
+	    die "Barcode deduplication only works with BAM output\n";
 	}
 
 	warn "Processing paired-end custom Bismark output file(s):\n";
@@ -557,7 +557,7 @@ foreach my $file (@filenames){
 sub deduplicate_barcoded_umi{
 
     my $file = shift;
-    
+    warn "Running in >>> UMI-mode <<< (no mismatches in UMI tolerated)\n\n"; sleep(1);
     my %unique_seqs;
     my %positions;
     
@@ -592,6 +592,7 @@ sub deduplicate_barcoded_umi{
     }
     
     my $count = 0;
+    my $unmapped = 0;
     my $unique_seqs = 0;
     my $removed = 0;
     
@@ -604,7 +605,6 @@ sub deduplicate_barcoded_umi{
 	    next;
 	}
 
-	++$count;
 	my $composite; # storing positional data. For single end data we are only using the start coordinate since the end might have been trimmed to different lengths
 	### in this UMI mode we also store the read barcode (UMI) as additional means of assisting the deduplication
 	### in effect the $composite string looks like this (separated by ':'):
@@ -616,7 +616,17 @@ sub deduplicate_barcoded_umi{
 	
 	# SAM format
 	my ($id,$strand,$chr,$start,$cigar) = (split (/\t/))[0,1,2,3,5]; # we are assigning the FLAG value to $strand
-	
+
+	if ($single){
+	    if($strand & 0x4){
+		++$unmapped;
+		# warn "Sequence unmapped -> skipping\n"; 
+		next;
+	    }	
+	}
+
+	++$count;
+
 	my $umi_seq; 
 
 	if ($double_umi){
@@ -634,7 +644,7 @@ sub deduplicate_barcoded_umi{
 	    # warn "paired-end mode\n"
 	}
 	# warn "$umi_seq\n"; sleep(1);
-
+	
 	if ($umi_seq){
 	    if ($umi_seq =~ /[^GATCNgatcn]/){
 		die "Failed to extract a UMI that looks like a DNA sequence: $umi_seq (last element of each read ID needs to be the UMI sequence, e.g. ':CATGAT'\n\n";
@@ -692,9 +702,9 @@ sub deduplicate_barcoded_umi{
 		    }
 		}
 	    }
-	    
+		    
 	    ### Here we take the barcode sequence into consideration
-	    $composite = join (":",$strand,$chr,$start,$umi);
+	    $composite = join (":",$strand,$chr,$start,$umi_seq);
 	    # warn "$composite\n"; sleep(1);
 	}
 	elsif($paired){
@@ -794,6 +804,7 @@ sub deduplicate_barcoded_umi{
 		# the only thing we need is the start position
 		($start) = (split (/\t/))[3];
 	    }
+	    ### TODO: Need to add support for unmapped FLAGs! 07 11 2016
 	    else{
 		die "So far unhandled FLAG: $flag. Please update UMI-Bam\n\n";
 	    }    
@@ -803,6 +814,7 @@ sub deduplicate_barcoded_umi{
 	else{
 	    die "Input must be single or paired-end\n";
 	}
+	#warn "$composite\n";	
 	
 	if (exists $unique_seqs{$composite}){
 	    ++$removed;
@@ -834,11 +846,13 @@ sub deduplicate_barcoded_umi{
     
     
     warn "\nTotal number of alignments analysed in $file:\t$count\n";
+    warn "Total number of sequences were unaligned:\t$unmapped\n";
     warn "Total number duplicated alignments removed:\t$removed ($percentage%)\n";
     warn "Duplicated alignments were found at:\t",scalar keys %positions," different position(s)\n\n";
     warn "Total count of deduplicated leftover sequences: $leftover ($percentage_leftover% of total)\n\n";
     
     print REPORT "\nTotal number of alignments analysed in $file:\t$count\n";
+    print REPORT "Total number of sequences were unaligned:\t$unmapped\n";
     print REPORT "Total number duplicated alignments removed:\t$removed ($percentage%)\n";
     print REPORT "Duplicated alignments were found at:\t",scalar keys %positions," different position(s)\n\n";
     print REPORT "Total count of deduplicated leftover sequences: $leftover ($percentage_leftover% of total)\n\n";
