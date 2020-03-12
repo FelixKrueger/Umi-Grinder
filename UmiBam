@@ -647,7 +647,8 @@ sub deduplicate_barcoded_umi{
 	
 	if ($umi_seq){
 	    if ($umi_seq =~ /[^GATCNgatcn]/){
-		die "Failed to extract a UMI that looks like a DNA sequence: $umi_seq (last element of each read ID needs to be the UMI sequence, e.g. ':CATGAT'\n\n";
+			# warn "UMI was: $umi_seq\nLine was: $_\n";
+		 	die "Failed to extract a UMI that looks like a DNA sequence: $umi_seq (last element of each read ID needs to be the UMI sequence, e.g. ':CATGAT'\n\n";
 	    }
 	}
 	else{
