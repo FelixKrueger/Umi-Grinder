@@ -47,8 +47,8 @@ if ($version){
                            UMI Deduplication for BAM files
 
                           Deduplicator Version: $dedup_version
-              Copyright 2010-16 Felix Krueger, Babraham Bioinformatics
-                www.bioinformatics.babraham.ac.uk/projects/bismark/
+              Copyright 2016-20 Felix Krueger, Babraham Bioinformatics
+                      https://github.com/FelixKrueger/Umi-Grinder
 
 
 VERSION
