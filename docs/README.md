@@ -33,3 +33,7 @@ The path to your Samtools installation, e.g. /home/user/samtools/. Does not need
 `--version`
 
 Print version information and exit
+
+`--help`
+
+Print this help and exit
