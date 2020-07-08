@@ -935,7 +935,7 @@ sub print_helpfile{
     print "*** Please note that for paired-end BAM files the deduplication script expects Read1 and Read2 to\nfollow each other in consecutive lines! If the file has been sorted by position make sure that you resort it\nby read name first (e.g. using samtools sort -n)  ***\n\n";
 
     print '='x111,"\n\n";
-    print ">>> USAGE: ./deduplicate_bismark_alignment_output.pl [options] filename(s) <<<\n\n";
+    print ">>> USAGE: UmiBam [options] filename(s) <<<\n\n";
 
     print "-s/--single\t\tdeduplicate single-end BAM files (default format: SAM)\n";
     print "-p/--paired\t\tdeduplicate paired-end BAM files (default format: SAM)\n\n";
