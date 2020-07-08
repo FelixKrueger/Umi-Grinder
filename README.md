@@ -6,9 +6,11 @@ UmiBam is supposed to remove alignments to the same position in the genome from 
 UmiBam keeps the first alignment to a given position and discards all others (as alignments are not ordered in any way this is also near enough random).
 
 **Deduplication of single-end alignments uses:**
+
 chromosome:start coordinate:strand:[UMI]
 
 **Deduplication of paired-end alignments uses:**
+
 chromosome:start coordinate:end coordinate:strand:[UMI]
 
 The default deduplication mode will just work on positions, but it can also use UMIs in addition to the alignment position (please see options `--umi` and `--double_umi`). In UMI mode, UMIs will be used as exact matches in it's default mode. Alternatively, 1 or 2 mismatches can be allowed using the option `--mm`, but just as a word of warning: this increases the compute time hugely (and often doesn't affect the results whatsoever...).
