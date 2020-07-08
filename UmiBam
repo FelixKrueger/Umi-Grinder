@@ -10,7 +10,7 @@ use Getopt::Long;
 ### 15 06 2020
 ### Adapting to also work with softclipped reads (CIGAR operation S)
 
-my $dedup_version = 'v0.0.2';
+my $dedup_version = 'v0.2.0';
 
 my $help;
 my $representative;
