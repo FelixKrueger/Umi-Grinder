@@ -918,7 +918,7 @@ sub bam_isTruncated{
 	if ($_ =~ /^\[/){
 	    if ($_ =~ /[EOF|truncated]/){
 		die "Captured error message: '$_'\n\n[ERROR] The file appears to be truncated, please ensure that there were no errors while copying the file!!! Exiting...\n\n";
-	    } 8
+	    }
 	}
 	last if ($count == 10); 	# this should be enough
     }
