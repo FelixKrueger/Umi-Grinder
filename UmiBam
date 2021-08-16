@@ -10,7 +10,11 @@ use Getopt::Long;
 ### 15 06 2020
 ### Adapting to also work with softclipped reads (CIGAR operation S)
 
+### 16 08 2021
+### Fixing auto-detection 
+
 my $dedup_version = 'v0.2.0';
+my $copyright_dates = "2016-21";
 
 my $help;
 my $representative;
@@ -50,7 +54,7 @@ if ($version){
                            UMI Deduplication for BAM files
 
                           Deduplicator Version: $dedup_version
-              Copyright 2016-20 Felix Krueger, Babraham Bioinformatics
+              Copyright $copyright_dates Felix Krueger, Babraham Bioinformatics
                       https://github.com/FelixKrueger/Umi-Grinder
 
 
@@ -221,22 +225,30 @@ foreach my $file (@filenames){
         while (<DETERMINE>){
             last unless (/^\@/);
             if ($_ =~ /^\@PG/){
-                # warn "found the \@PG line:\n";
-                # warn "$_";
+                warn "found a \@PG line:\n$_";
 
-                if ($_ =~ /\s+--?1\s+/ and $_ =~ /\s+--?2\s+/){ # allowing -1 and -2 or --1 and --2
-                    warn "Treating file as paired-end data (extracted from \@PG line)\n"; sleep(1);
-                    $paired = 1;
-                    $single = 0;
-                }
-                else{
-                    warn "Treating file as single-end data (extracted from \@PG line)\n"; sleep(1);
-                    $paired = 0;
-                    $single = 1;
+                # Paired-end test for known aligners
+			    if ($_ =~ /ID:Bismark/ or $_ =~ /ID:hisat2/ or $_ =~ /ID:bowtie2/){
+                    if ($_ =~ /\s+--?1\s+/ and $_ =~ /\s+--?2\s+/){ # allowing -1 and -2 or --1 and --2
+                        warn "Treating file as paired-end data (extracted from \@PG line)\n"; sleep(1);
+                        $paired = 1;
+                        $single = 0;
+                    }
+                    else{
+                        warn "Treating file as single-end data (extracted from \@PG line)\n"; sleep(1);
+                        $paired = 0;
+                        $single = 1;
+                    }
+                    last; # exiting after one attempt
                 }
             }
         }
+  
 	    close DETERMINE or warn "$!\n";
+        
+        unless (defined $paired){
+		    die "\nUnable to detect library type automatically, please specify whether the file is single- or paired-end manually\n\n";
+	    }
     }
 
     if ($file =~ /(\.bam$|\.sam$)/){
