@@ -13,7 +13,7 @@ use Getopt::Long;
 ### 16 08 2021
 ### Fixing auto-detection 
 
-my $dedup_version = 'v0.2.0';
+my $dedup_version = 'v0.2.0dev';
 my $copyright_dates = "2016-21";
 
 my $help;
@@ -962,7 +962,7 @@ sub print_helpfile{
 
     print '='x111,"\n\n";
 
-    print "This script was last modified on July 8, 2020\n\n";
+    print "This script was last modified on 16 August, 2021\n\n";
 }
 
 
