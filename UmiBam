@@ -1276,13 +1276,13 @@ sub deduplicate_barcoded_umi_with_mismatches{
     my %positions;
 
     if ($file =~ /\.gz$/){
-	open (IN,"gunzip -c $file |") or die "Unable to read from gzipped file $file: $!\n";
+	    open (IN,"gunzip -c $file |") or die "Unable to read from gzipped file $file: $!\n";
     }
     elsif ($file =~ /\.bam$/){
-	open (IN,"$samtools_path view -h $file |") or die "Unable to read from BAM file $file: $!\n";
+	    open (IN,"$samtools_path view -h $file |") or die "Unable to read from BAM file $file: $!\n";
     }
     else{
-	open (IN,$file) or die "Unable to read from $file: $!\n";
+	    open (IN,$file) or die "Unable to read from $file: $!\n";
     }
 
     my $outfile = $file;
@@ -1309,249 +1309,310 @@ sub deduplicate_barcoded_umi_with_mismatches{
     my $count = 0;
     my $unique_seqs = 0;
     my $removed = 0;
+    my @locations; # needed for Hi-C fragment sorting
 
     while (<IN>){
 
-	### if this was a SAM file we ignore header lines
-	if (/^\@\w{2}\t/){
-	    warn "skipping SAM header line:\t$_";
-	    print OUT; # Printing the header lines again into the de-duplicated file
-	    next;
-	}
+        ### if this was a SAM file we ignore header lines
+        if (/^\@\w{2}\t/){
+            # warn "skipping SAM header line:\t$_";
+            print OUT; # Printing the header lines again into the de-duplicated file
+            next;
+        }
 
-	my $composite; # storing positional data. For single end data we are only using the start coordinate since the end might have been trimmed to different lengths
-	### in this UMI mode we also store the read barcode (UMI) as additional means of assisting the deduplication
-	### in effect the $composite string looks like this (separated by ':'):
+        my $composite; # storing positional data. For single end data we are only using the start coordinate since the end might have been trimmed to different lengths
+        ### in this UMI mode we also store the read barcode (UMI) as additional means of assisting the deduplication
+        ### in effect the $composite string looks like this (separated by ':'):
 
-	### FLAG:chromosome:start->{barcode}
+        ### FLAG:chromosome:start->{barcode}
 
-	my $end;
-	my $line1;
+        my $end;
+        my $line1;
 
-	# SAM format
-	my ($id,$strand,$chr,$start,$cigar) = (split (/\t/))[0,1,2,3,5]; # we are assigning the FLAG value to $strand
+        # SAM format
+        my ($id,$strand,$chr,$start,$cigar) = (split (/\t/))[0,1,2,3,5]; # we are assigning the FLAG value to $strand
 
-	my $umi_seq;
+        my $umi_seq;
 
-	if ($double_umi){
-	    $id =~ /:R1:(\w+):R2:(\w+):.*$/; # adapting for Tom's barcodes
-	    my $umi1 = $1;
-	    my $umi2 = $2;
-	    $umi_seq = $umi1.$umi2;
-	}
-	else{
-	    $id =~ /.*:(.+)$/; # taking the last element after the :
-	    $umi_seq = $1;
-	}
-	# warn "$umi_seq\n"; 	 sleep(1);
+        if ($double_umi){
+            $id =~ /:R1:(\w+):R2:(\w+):.*$/; # adapting for Tom's barcodes
+            my $umi1 = $1;
+            my $umi2 = $2;
+            $umi_seq = $umi1.$umi2;
+        }
+        else{
+            $id =~ /.*:(.+)$/; # taking the last element after the :
+            $umi_seq = $1;
+        }
+        # warn "$umi_seq\n"; 	 sleep(1);
 
-	if ($umi_seq){
-	    if ($umi_seq =~ /[^GATCNgatcn\+]/){
-		    die "Failed to extract a UMI that looks like a DNA sequence: $umi (last element of each read ID needs to be the UMI sequence, e.g. ':CATGAT'\n\n";
-	    }
-	}
-	else{
-	    die "Failed to extract a UMI from the read ID (last element of each read ID needs to be the UMI sequence, e.g. ':CATGAT'\n\n";
-	}
-
-	### SAM single-end
-	if ($single){
-
-	    if ($strand == 0 ){
-		    ### read aligned to the forward strand. No action needed
-	    }
-	    elsif ($strand == 16){
-            ### read is on reverse strand
-
-            ### ignoring reverse reads for the moment
-
-            $start -= 1; # only need to adjust this once
-
-            # for InDel free matches we can simply use the M number in the CIGAR string
-            if ($cigar =~ /^(\d+)M$/){ # linear match
-                $start += $1;
+        if ($umi_seq){
+            if ($umi_seq =~ /[^GATCNgatcn\+]/){
+                die "Failed to extract a UMI that looks like a DNA sequence: $umi (last element of each read ID needs to be the UMI sequence, e.g. ':CATGAT'\n\n";
             }
-            else{
-                # parsing CIGAR string
-                my @len = split (/\D+/,$cigar); # storing the length per operation
-                my @ops = split (/\d+/,$cigar); # storing the operation
-                shift @ops; # remove the empty first element
-                die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
+        }
+        else{
+            die "Failed to extract a UMI from the read ID (last element of each read ID needs to be the UMI sequence, e.g. ':CATGAT'\n\n";
+        }
 
-                # warn "CIGAR string; $cigar\n";
-                ### determining end position of a read
-                foreach my $index(0..$#len){
-                    if ($ops[$index] eq 'M'){  # standard matching bases
-                        $start += $len[$index];
-                        # warn "Operation is 'M', adding $len[$index] bp\n";
-                    }
-                    elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
-                        # warn "Operation is 'I', next\n";
-                    }
-                    elsif($ops[$index] eq 'D'){ # deletions do affect the end position
-                        #  warn "Operation is 'D', adding $len[$index] bp\n";
-                        $start += $len[$index];
-                    }
-                    elsif($ops[$index] eq 'S'){ # soft-clipped bases do NOT affect the end position
-                        # warn "Operation is 'S'\n";
-                    }
-                    elsif ($ops[$index] eq 'N'){  # splice junctions are similar to deletions and do count towards the end position
-                        # warn "Operation is 'N', adding $len[$index] bp\n";
-                        $start += $len[$index];
-                    }
-                    else{
-                        die "SE BAM (mismatch_mode): Found CIGAR operations other than M, I, S, N or D: '$ops[$index]'. Not allowed at the moment\n";
+        ### SAM single-end
+        if ($single){
+
+            if ($strand == 0 ){
+                ### read aligned to the forward strand. No action needed
+            }
+            elsif ($strand == 16){
+                ### read is on reverse strand
+
+                ### ignoring reverse reads for the moment
+
+                $start -= 1; # only need to adjust this once
+
+                # for InDel free matches we can simply use the M number in the CIGAR string
+                if ($cigar =~ /^(\d+)M$/){ # linear match
+                    $start += $1;
+                }
+                else{
+                    # parsing CIGAR string
+                    my @len = split (/\D+/,$cigar); # storing the length per operation
+                    my @ops = split (/\d+/,$cigar); # storing the operation
+                    shift @ops; # remove the empty first element
+                    die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
+
+                    # warn "CIGAR string; $cigar\n";
+                    ### determining end position of a read
+                    foreach my $index(0..$#len){
+                        if ($ops[$index] eq 'M'){  # standard matching bases
+                            $start += $len[$index];
+                            # warn "Operation is 'M', adding $len[$index] bp\n";
+                        }
+                        elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
+                            # warn "Operation is 'I', next\n";
+                        }
+                        elsif($ops[$index] eq 'D'){ # deletions do affect the end position
+                            #  warn "Operation is 'D', adding $len[$index] bp\n";
+                            $start += $len[$index];
+                        }
+                        elsif($ops[$index] eq 'S'){ # soft-clipped bases do NOT affect the end position
+                            # warn "Operation is 'S'\n";
+                        }
+                        elsif ($ops[$index] eq 'N'){  # splice junctions are similar to deletions and do count towards the end position
+                            # warn "Operation is 'N', adding $len[$index] bp\n";
+                            $start += $len[$index];
+                        }
+                        else{
+                            die "SE BAM (mismatch_mode): Found CIGAR operations other than M, I, S, N or D: '$ops[$index]'. Not allowed at the moment\n";
+                        }
                     }
                 }
-		    }
-	    }
-
-	    ### Here we take the barcode sequence into consideration
-	    $composite = join (":",$strand,$chr,$start);
-	    # warn "$composite\n"; sleep(1);
-
-	    $count++;
-	    if (exists $positions{$composite}->{$umi_seq}){
-		# warn "Position $composite with UMI $umi_seq already existed - skipping...\n";
-		++$removed;
-	    }
-	    else{
-		$positions{$composite}->{$umi_seq}->{alignment} = $_;
-		# warn "Position $composite with UMI $umi_seq is new - adding...\n";
-	    }
-
-	}
-	elsif($paired){
-
-	    ### storing the current line
-	    $line1 = $_;
-	    my $flag = (split /\t/,$line1)[1];
-
-	    # if the read aligns in forward orientation we can certainly use the start position of read 1, and only need to work out the end position of read 2
-	    if ($flag == 99){ # 99 is paired-end, properly paired, read first in pair, mate on reverse strand
-
-		### reading in the next line
-		$_ = <IN>;
-		# the only thing we need is the end position
-		($end,my $cigar_2) = (split (/\t/))[3,5];
-
-		$end -= 1; # only need to adjust this once
-
-		# for InDel free matches we can simply use the M number in the CIGAR string
-		if ($cigar_2 =~ /^(\d+)M$/){ # linear match
-		    $end += $1;
-		}
-		else{
-		    # parsing CIGAR string
-		    my @len = split (/\D+/,$cigar_2); # storing the length per operation
-		    my @ops = split (/\d+/,$cigar_2); # storing the operation
-		    shift @ops; # remove the empty first element
-		    die "CIGAR string contained a non-matching number of lengths and operations ($cigar_2)\n" unless (scalar @len == scalar @ops);
-
-		    # warn "CIGAR string; $cigar_2\n";
-		    ### determining end position of the read
-		    foreach my $index(0..$#len){
-			if ($ops[$index] eq 'M'){  # standard matching bases
-			    $end += $len[$index];
-			    # warn "Operation is 'M', adding $len[$index] bp\n";
-			}
-			elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
-			    # warn "Operation is 'I', next\n";
-			}
-			elsif($ops[$index] eq 'D'){ # deletions do affect the end position
-			    #  warn "Operation is 'D',adding $len[$index] bp\n";
-			    $end += $len[$index];
-			}
-			elsif($ops[$index] eq 'N'){ # skipped regions (e.g. splice junctions) do affect the end position
-                            #  warn "Operation is 'N',adding $len[$index] bp\n";
-                            $end += $len[$index];
             }
-            elsif($ops[$index] eq 'S'){ # soft-clipped bases do NOT affect the end position
-				# warn "Operation is 'S'\n";
+
+            ### Here we take the barcode sequence into consideration
+            $composite = join (":",$strand,$chr,$start);
+            # warn "$composite\n"; sleep(1);
+
+            $count++;
+            if (exists $positions{$composite}->{$umi_seq}){
+            # warn "Position $composite with UMI $umi_seq already existed - skipping...\n";
+            ++$removed;
             }
-			else{
-			    die "PE BAM (mismatch mode): Found CIGAR operations other than M, I, S, N or D: '$ops[$index]'. Not allowed at the moment\n";
-			}
-		    }
-		}
-	    }
-	    elsif($flag == 83){
-		# Flag 83 is paired-end, properly paired, read reverse strand, first in pair
-		# else read 1 aligns in reverse orientation and we need to work out the end of the fragment first, and use the start of the next line
+            else{
+            $positions{$composite}->{$umi_seq}->{alignment} = $_;
+            # warn "Position $composite with UMI $umi_seq is new - adding...\n";
+            }
 
-		$end = $start - 1; # need to adjust this only once
+        }
+        elsif($paired){
 
-		# for InDel free matches we can simply use the M number in the CIGAR string
-		if ($cigar =~ /^(\d+)M$/){ # linear match
-		    $end += $1;
-		}
-		else{
-		    # parsing CIGAR string
-		    my @len = split (/\D+/,$cigar); # storing the length per operation
-		    my @ops = split (/\d+/,$cigar); # storing the operation
-		    shift @ops; # remove the empty first element
-		    die "CIGAR string contained a non-matching number of lengths and operations ($cigar)\n" unless (scalar @len == scalar @ops);
+            ### storing the current line
+            $line1 = $_;
+            if($hic){
+                ## Added this section 30 09 2021
+                # warn "Hi-C mode:\n";
+                
+                ### reading in the next line
+                my $line2 = <IN>;
+                chomp $line1;
+                chomp $line2;
+                
+                # warn "R1: $line1\n";
+                # warn "R2: $line2\n~~~~~~~~~~~~~~~~~\n";
+                
+                # For Hi-C mode it should be enough to work with the chromosome and start positions of both R1 and R2
+                my ($chr_r1,$start_r1) = (split (/\t/,$line1))[2,3];
+                my ($chr_r2,$start_r2) = (split (/\t/,$line2))[2,3];
 
-		    # warn "CIGAR string; $cigar\n";
-		    ### determining end position of the read
-		    foreach my $index(0..$#len){
-			if ($ops[$index] eq 'M'){  # standard matching bases
-			    $end += $len[$index];
-			    # warn "Operation is 'M', adding $len[$index] bp\n";
-			}
-			elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
-			    # warn "Operation is 'I', next\n";
-			}
-			elsif($ops[$index] eq 'D'){ # deletions do affect the end position
-			    # warn "Operation is 'D',adding $len[$index] bp\n";
-			    $end += $len[$index];
-			}
-            elsif($ops[$index] eq 'S'){ # soft-clipped bases do NOT affect the end position
-								# warn "Operation is 'S'\n";
-			}
-			elsif($ops[$index] eq 'N'){ # skipped regions such as splice junctions do affect the end position
-                            # warn "Operation is 'N',adding $len[$index] bp\n";
-                            $end += $len[$index];
+                # print "$chr_r1\t$start_r1\n$chr_r2\t$start_r2\n"; sleep(1);
+                
+                # Hi-C data essentially behaves like 2 separate single-end alignments, so we
+                # should be fine to just score chr1:start1:chr2:start2:UMI. Since we don't
+                # know whether R1 and R2 are aligned in a directional fashion, we need to test
+                # both combinations.
+            
+                ### Here we take the barcode sequence into consideration
+                # Let's try out a sorting approach, so that we always use alignments in the same order
+                my $composite1 = join (":",$chr_r1,$start_r1);
+                my $composite2 = join (":",$chr_r2,$start_r2);
+                # print "$chr_r1\t$start_r1\n$chr_r2\t$start_r2\n"; sleep(1);
+                push @locations,$composite1;
+                push @locations,$composite2;
+                
+                #print @locations;
+                # location combinations should always appear in the same order
+                @locations = sort (@locations);
+                #print @locations;
+            
+                foreach (@locations){
+                    # warn "$_\n";
+                    $composite .= "$_:";
+                }
+                $composite =~ s/:$//;
+                @locations = (); # resetting
+                # warn ">>$composite<<\n"; sleep(1);
+                # print ("$composite1\n$composite2\n\n      :::::\n\n"); sleep(1);
+               
+                $count++;
+                if (exists $positions{$composite}->{$umi_seq}){
+                    # warn "Position $composite with UMI $umi_seq already existed - skipping...\n";
+                    ++$removed;
+                }
+                else{
+                    # Hi-C; PAIRED-END
+                    $positions{$composite}->{$umi_seq}->{alignment_1} = "$line1\n";
+                    $positions{$composite}->{$umi_seq}->{alignment_2} = "$line2\n";
+                }
+
+
+            }
+            else{
+
+                my $flag = (split /\t/,$line1)[1];
+
+                # if the read aligns in forward orientation we can certainly use the start position of read 1, and only need to work out the end position of read 2
+                if ($flag == 99){ # 99 is paired-end, properly paired, read first in pair, mate on reverse strand
+
+                    ### reading in the next line
+                    $_ = <IN>;
+                    # the only thing we need is the end position
+                    ($end,my $cigar_2) = (split (/\t/))[3,5];
+
+                    $end -= 1; # only need to adjust this once
+
+                    # for InDel free matches we can simply use the M number in the CIGAR string
+                    if ($cigar_2 =~ /^(\d+)M$/){ # linear match
+                        $end += $1;
+                    }
+                    else{
+                        # parsing CIGAR string
+                        my @len = split (/\D+/,$cigar_2); # storing the length per operation
+                        my @ops = split (/\d+/,$cigar_2); # storing the operation
+                        shift @ops; # remove the empty first element
+                        die "CIGAR string contained a non-matching number of lengths and operations ($cigar_2)\n" unless (scalar @len == scalar @ops);
+
+                        # warn "CIGAR string; $cigar_2\n";
+                        ### determining end position of the read
+                        foreach my $index(0..$#len){
+                            if ($ops[$index] eq 'M'){  # standard matching bases
+                                $end += $len[$index];
+                                # warn "Operation is 'M', adding $len[$index] bp\n";
+                            }
+                            elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
+                                # warn "Operation is 'I', next\n";
+                            }
+                            elsif($ops[$index] eq 'D'){ # deletions do affect the end position
+                                #  warn "Operation is 'D',adding $len[$index] bp\n";
+                                $end += $len[$index];
+                            }
+                            elsif($ops[$index] eq 'N'){ # skipped regions (e.g. splice junctions) do affect the end position
+                                            #  warn "Operation is 'N',adding $len[$index] bp\n";
+                                            $end += $len[$index];
+                            }
+                            elsif($ops[$index] eq 'S'){ # soft-clipped bases do NOT affect the end position
+                                # warn "Operation is 'S'\n";
+                            }
+                            else{
+                                die "PE BAM (mismatch mode): Found CIGAR operations other than M, I, S, N or D: '$ops[$index]'. Not allowed at the moment\n";
+                            }
                         }
-			else{
-			    die "PE BAM (mismatch mode): Found CIGAR operations other than M, I or D: '$ops[$index]'. Not allowed at the moment\n";
-			}
-		    }
-		}
+                    }
+                }
+                elsif($flag == 83){
+                    # Flag 83 is paired-end, properly paired, read reverse strand, first in pair
+                    # else read 1 aligns in reverse orientation and we need to work out the end of the fragment first, and use the start of the next line
 
-		### reading in the next line
-		$_ = <IN>;
-		# the only thing we need is the start position
-		($start) = (split (/\t/))[3];
-	    }
-	    else{
-		    die "So far unhandled FLAG: $flag. Please update UMI-Bam\n\n";
-	    }
+                    $end = $start - 1; # need to adjust this only once
 
-	    ### Here we take the barcode sequence into consideration
-	    $composite = join (":",$strand,$chr,$start,$end);
+                    # for InDel free matches we can simply use the M number in the CIGAR string
+                    if ($cigar =~ /^(\d+)M$/){ # linear match
+                        $end += $1;
+                    }
+                    else{
+                        # parsing CIGAR string
+                        my @len = split (/\D+/,$cigar); # storing the length per operation
+                        my @ops = split (/\d+/,$cigar); # storing the operation
+                        shift @ops; # remove the empty first element
+                        die "CIGAR string contained a non-matching number of lengths and operations ($cigar)\n" unless (scalar @len == scalar @ops);
 
-	    $count++;
-	    if (exists $positions{$composite}->{$umi_seq}){
-		# warn "Position $composite with UMI $umi_seq already existed - skipping...\n";
-		++$removed;
-	    }
-	    else{
-		# SAM PAIRED-END
-		$positions{$composite}->{$umi_seq}->{alignment_1} = $line1;
-		$positions{$composite}->{$umi_seq}->{alignment_2} = $_;
-		# warn "Position $composite with UMI $umi_seq is new - adding...\n";
-	    }
-	}
-	else{
-	    die "Input must be single or paired-end\n";
-	}
+                        # warn "CIGAR string; $cigar\n";
+                        ### determining end position of the read
+                        foreach my $index(0..$#len){
+                            if ($ops[$index] eq 'M'){  # standard matching bases
+                                $end += $len[$index];
+                                # warn "Operation is 'M', adding $len[$index] bp\n";
+                            }
+                            elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
+                                # warn "Operation is 'I', next\n";
+                            }
+                            elsif($ops[$index] eq 'D'){ # deletions do affect the end position
+                                # warn "Operation is 'D',adding $len[$index] bp\n";
+                                $end += $len[$index];
+                            }
+                            elsif($ops[$index] eq 'S'){ # soft-clipped bases do NOT affect the end position
+                                                # warn "Operation is 'S'\n";
+                            }
+                            elsif($ops[$index] eq 'N'){ # skipped regions such as splice junctions do affect the end position
+                                            # warn "Operation is 'N',adding $len[$index] bp\n";
+                                            $end += $len[$index];
+                                        }
+                            else{
+                                die "PE BAM (mismatch mode): Found CIGAR operations other than M, I or D: '$ops[$index]'. Not allowed at the moment\n";
+                            }
+                        }
+                    }
 
+                    ### reading in the next line
+                    $_ = <IN>;
+                    # the only thing we need is the start position
+                    ($start) = (split (/\t/))[3];
+                }
+                else{
+                    die "So far unhandled FLAG: $flag. Please update UMI-Bam\n\n";
+                }
+
+                ### Here we take the barcode sequence into consideration
+                $composite = join (":",$strand,$chr,$start,$end);
+
+                $count++;
+                if (exists $positions{$composite}->{$umi_seq}){
+                    # warn "Position $composite with UMI $umi_seq already existed - skipping...\n";
+                    ++$removed;
+                }
+                else{
+                    # SAM PAIRED-END
+                    $positions{$composite}->{$umi_seq}->{alignment_1} = $line1;
+                    $positions{$composite}->{$umi_seq}->{alignment_2} = $_;
+                    # warn "Position $composite with UMI $umi_seq is new - adding...\n";
+                }
+            }
+        }
+        else{
+            die "Input must be single or paired-end\n";
+        }
     }
 
     ### PRINTING RESULTS
 
-    ### Now going through all stored positions and printing out sequences with unique UMIs, or UMIs with an edit distance < $mm
+    ### Now going through all stored positions and printing out sequences with unique UMIs, or UMIs with an edit distance > $mm
     warn "Now printing out alignments with unique UMIs (UMIs closer than or equal to an edit distance of >>$mm<< are considered duplicates)\n";
 
   POS:    foreach my $pos (keys %positions){
@@ -1559,70 +1620,80 @@ sub deduplicate_barcoded_umi_with_mismatches{
       # warn "$pos\n";
 
       ### Looping through all sequences to see if they are very different to other sequences for this position (using a hemming distance, mismatches only, no indels)
-    UMI:	foreach my $umi_seq (keys %{$positions{$pos}}){
-	# warn "Current UMI:  $umi_seq\n";
-	unless (@umis){
-	    # warn "Adding first UMI to the unique UMI array\n";
-	    push @umis, $umi_seq;
-	    next UMI;
-	}
-	my $umi_too_close = 0;
+        UMI:	foreach my $umi_seq (keys %{$positions{$pos}}){
+            # warn "Current UMI:  $umi_seq\n";
+            unless (@umis){
+                # warn "Adding first UMI to the unique UMI array\n";
+                push @umis, $umi_seq;
+                next UMI;
+            }
+            # sleep(1);
+            my $umi_too_close = 0;
 
-	foreach my $seq(@umis){
-	    my $edit_dist = get_edit_distance($seq,$umi_seq);
-	    # warn "UMI-seq:      $umi_seq\nPrevious-seq: $seq\nEdit distance: $edit_dist\n";
-	    if ($edit_dist <= $mm){
-		# warn "Sequence seems too closely related to already existing sequence(s). Chucking...\n";
-		$umi_too_close++;
-		last; # one fail is quite enough
-	    }
-	}
+            foreach my $seq(@umis){
+                my $edit_dist = get_edit_distance($seq,$umi_seq);
+                # warn "UMI-seq:      $umi_seq\nPrevious-seq: $seq\nEdit distance: $edit_dist\n";
+                if ($edit_dist <= $mm){
+                    # warn "Sequence seems too closely related to already existing sequence(s). Chucking...\n";
+                    $umi_too_close++;
+                    last; # one fail is quite enough
+                }
+            }
 
-	if ($umi_too_close){
-	    ++$removed;
-	}
-	else{
-	    # warn "Adding UMI to the unique UMI array\n";
-	    push @umis, $umi_seq;
-	}
+            if ($umi_too_close){
+                ++$removed;
+            }
+            else{
+                # warn "Adding UMI to the unique UMI array\n";
+                push @umis, $umi_seq;
+            }
+        }
+
+        ### Printing
+        if ($paired){
+            foreach my $uniq_umi(@umis){
+                # warn "printing alignment for UMI: $uniq_umi\n";
+                print OUT $positions{$pos}->{$uniq_umi}->{alignment_1}; # SAM read 1
+                print OUT $positions{$pos}->{$uniq_umi}->{alignment_2}; # SAM read 2
+                # warn "$positions{$pos}->{$uniq_umi}->{alignment_1}"; 
+                # warn "$positions{$pos}->{$uniq_umi}->{alignment_2}\n"; sleep(1);
+            }
+        }
+        else{ # single-end
+            foreach my $uniq_umi(@umis){
+                # warn "printing alignment for UMI: $uniq_umi\n";
+                print OUT $positions{$pos}->{$uniq_umi}->{alignment};
+            }
+        }
+        # warn "~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n";sleep(1);
     }
-
-      ### Printing
-      if ($paired){
-	  foreach my $uniq_umi(@umis){
-	      # warn "printing alignment for UMI: $uniq_umi\n";
-	      print OUT $positions{$pos}->{$uniq_umi}->{alignment_1}; # SAM read 1
-	      print OUT $positions{$pos}->{$uniq_umi}->{alignment_2}; # SAM read 2
-	  }
-      }
-      else{ # single-end
-	  foreach my $uniq_umi(@umis){
-	      # warn "printing alignment for UMI: $uniq_umi\n";
-	      print OUT $positions{$pos}->{$uniq_umi}->{alignment};
-	  }
-      }
-      # warn "~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n";sleep(1);
-  }
 
     my $percentage;
     my $percentage_leftover;
     my $leftover = $count - $removed;
 
     unless ($count == 0){
-	$percentage = sprintf("%.2f",$removed/$count*100);
-	$percentage_leftover = sprintf("%.2f",$leftover/$count*100);
+	    $percentage = sprintf("%.2f",$removed/$count*100);
+	    $percentage_leftover = sprintf("%.2f",$leftover/$count*100);
     }
     else{
-	$percentage = 'N/A';
-	$percentage_leftover = 'N/A';
+	    $percentage = 'N/A';
+	    $percentage_leftover = 'N/A';
     }
 
-
-    warn "\nTotal number of alignments analysed in $file:\t$count\n";
+    warn "\nUMIs closer than, or equal to, an edit distance of >>$mm<< were considered duplicates:\n";
+    warn "="x84,"\n";
+    warn "Total number of alignments analysed in $file:\t$count\n";
     warn "Total number duplicated alignments removed:\t$removed ($percentage%)\n";
     warn "Total count of deduplicated leftover sequences: $leftover ($percentage_leftover% of total)\n\n";
 
-    print REPORT "\nTotal number of alignments analysed in $file:\t$count\n";
+    print REPORT "UMIs closer than, or equal to, an edit distance of >>$mm<< were considered duplicates:\n";
+    print REPORT "="x84,"\n";
+    print REPORT "Total number of alignments analysed in $file:\t$count\n";
     print REPORT "Total number duplicated alignments removed:\t$removed ($percentage%)\n";
     print REPORT "Total count of deduplicated leftover sequences: $leftover ($percentage_leftover% of total)\n\n";
+
+    # close REPORT;
+    # close OUT;
+    close IN;
 }
