@@ -20,6 +20,9 @@ my $dedup_version   = 'v0.2.0dev';
 my $copyright_dates = "2016-21";
 my $last_modified   = "01 Oct 2021";
 
+
+my %umi_reporting = (); # only required for Hi-C, and --detailed_UMI_report
+
 my $help;
 my $representative;
 my $single;
@@ -33,6 +36,7 @@ my $umi;
 my $mm;
 my $double_umi;
 my $hic;
+my $detail;
 my $version;
 
 my $command_line = GetOptions ('help' => \$help,
@@ -45,6 +49,7 @@ my $command_line = GetOptions ('help' => \$help,
 			       'mismatches|mm=i' => \$mm, # mismatches in the UMI sequence tolerated
 			       'version' => \$version,
                    'hic'     => \$hic,
+                   'detailed_UMI_report'   => \$detail,
     );
 
 die "Please respecify command line options\n\n" unless ($command_line);
@@ -92,6 +97,7 @@ if ($double_umi){
     warn "Setting --umi as well\n";
     $umi = 1; # setting $umi as well
 }
+
 
 
 unless ($global_single or $global_paired){
@@ -219,6 +225,8 @@ foreach my $file (@filenames){
     if ($file =~ /(\.bam$)/){
 	    bam_isTruncated($file);
     }
+    
+    %umi_reporting = (); # clearing; Only required when --detailed_UMI_report was specified
 
     unless($global_single or $global_paired){
 
@@ -289,12 +297,15 @@ foreach my $file (@filenames){
     $report =~ s/\.sam$//;
     $report =~ s/\.bam$//;
     $report =~ s/\.txt$//;
+    my $detail_report = $report;
     if ($umi){
         if ($mm){
             $report =~ s/$/.UMI_${mm}mm_deduplication_report.txt/;
+            $detail_report =~ s/$/.detailed_UMI_report.txt/;
         }
         else{
             $report =~ s/$/.UMI_deduplication_report.txt/;
+            $detail_report =~ s/$/.detailed_UMI_report.txt/;
         }
     }
     else{
@@ -310,6 +321,12 @@ foreach my $file (@filenames){
         else{
             deduplicate_barcoded_umi($file);
         }
+
+        ### PRINTING DETAILED UMI REPORT
+        if ($detail){
+            detailed_umi_reporting($detail_report,%umi_reporting); 
+        }
+
     }
     ### as the default option we simply write out the first read for a position and discard all others. This is the fastest option
     else{
@@ -1122,6 +1139,7 @@ sub print_helpfile{
     print "\t\t\tDeduplication is based on the chromosome and starting position of both R1 and R2, in combinations\n";
     print "\t\t\tchr_R1:start_R1:chr_R2:start_R2 and chr_R2:start_R2:chr_R1:start_R1. If --umi is selected as well,\n\t\t\tthe UMI sequence is used in addition to that (e.g. chr_R1:start_R1:chr_R2:start_R2:UMI)\n\n";
 
+    print "--detailed_UMI_report\tIn Hi-C mode, this will print an additional tab-delimited text report listing ALL\n\t\t\tfound UMIs in decending order, with R1 and R2 locations in the following format:\n\t\t\tUMI // count // R1 chrom // R1 pos // R2 chrom // R2 pos\n\n";
 
     print "--mm/--mismatches <INT>\tNumber of mismatches tolerated in the UMI. If a sequence has the same edit (hemming) distance to\n\t\t\tseveral different UMIs the read will be regarded as a duplicate and discarded. Currently allowed\n\t\t\tmaximum of --mm is 6. Default: 0.\n\n";
     print "--bam\t\t\tThe output will be written out in BAM format instead of the default SAM format. This script will\n\t\t\tattempt to use the path to Samtools that was specified with '--samtools_path', or, if it hasn't\n\t\t\tbeen specified, attempt to find Samtools in the PATH. If no installation of Samtools can be found,\n\t\t\tthe SAM output will be compressed with GZIP instead (yielding a .sam.gz output file)\n\n";
@@ -1274,7 +1292,7 @@ sub deduplicate_barcoded_umi_with_mismatches{
 
     my %unique_seqs;
     my %positions;
-
+      
     if ($file =~ /\.gz$/){
 	    open (IN,"gunzip -c $file |") or die "Unable to read from gzipped file $file: $!\n";
     }
@@ -1470,7 +1488,8 @@ sub deduplicate_barcoded_umi_with_mismatches{
                 @locations = (); # resetting
                 # warn ">>$composite<<\n"; sleep(1);
                 # print ("$composite1\n$composite2\n\n      :::::\n\n"); sleep(1);
-               
+                
+                
                 $count++;
                 if (exists $positions{$composite}->{$umi_seq}){
                     # warn "Position $composite with UMI $umi_seq already existed - skipping...\n";
@@ -1481,7 +1500,11 @@ sub deduplicate_barcoded_umi_with_mismatches{
                     $positions{$composite}->{$umi_seq}->{alignment_1} = "$line1\n";
                     $positions{$composite}->{$umi_seq}->{alignment_2} = "$line2\n";
                 }
-
+                
+                # Optional detailed UMI report
+                if ($detail){
+                    push @{$umi_reporting{$umi_seq}},"${composite1}:::$composite2";
+                }
 
             }
             else{
@@ -1610,8 +1633,9 @@ sub deduplicate_barcoded_umi_with_mismatches{
         }
     }
 
-    ### PRINTING RESULTS
 
+    ### PRINTING RESULTS
+    
     ### Now going through all stored positions and printing out sequences with unique UMIs, or UMIs with an edit distance > $mm
     warn "Now printing out alignments with unique UMIs (UMIs closer than or equal to an edit distance of >>$mm<< are considered duplicates)\n";
 
@@ -1697,3 +1721,25 @@ sub deduplicate_barcoded_umi_with_mismatches{
     # close OUT;
     close IN;
 }
+
+sub detailed_umi_reporting{
+    my ($detail_report) = @_;
+    warn "Now printing detailed UMI report\n";
+    open (DETAIL,">",$detail_report) or die "Failed to write to report $detail_report: $!";
+    print DETAIL "UMI\tcount\tR1 chrom\tR1 pos\tR2 chrom\tR2 pos\n";
+    foreach my $um (sort { scalar @{$umi_reporting{$b}} <=> scalar @{$umi_reporting{$a}}} keys %umi_reporting){
+        # print "$um\t";
+        
+        foreach my $entry ( @{$umi_reporting{$um}}){
+            # warn "$entry\n";
+            my ($r1coords,$r2coords) = (split ":::",$entry);
+            my ($r1_chr,$r1_pos) = (split ":",$r1coords);
+            my ($r2_chr,$r2_pos) = (split ":",$r2coords);
+            print DETAIL join ("\t",$um,scalar @{$umi_reporting{$um}},$r1_chr,$r1_pos,$r2_chr,$r2_pos),"\n";
+        }
+        # sleep(1);
+    }
+    close DETAIL or die $!;
+    warn "Finished printing detailed UMI report. Enjoy.\n\n";
+}
+
