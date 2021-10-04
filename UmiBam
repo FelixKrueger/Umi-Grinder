@@ -98,7 +98,17 @@ if ($double_umi){
     $umi = 1; # setting $umi as well
 }
 
-
+if ($detail){
+    unless ($hic){
+        die "The detailed UMI report is only intended for use with Hi-C data. Please re-specify!\n\n";
+    }
+    unless ($umi){
+        die "The detailed UMI report can only be used when the option --umi is selected. Please re-specify!\n";
+    }
+    if ($double_umi){
+         die "The detailed UMI report can only be used when the option --umi (but not --double_umi!) is selected. Please re-specify!\n";
+    }
+}
 
 unless ($global_single or $global_paired){
     if ($vanilla){
@@ -301,11 +311,11 @@ foreach my $file (@filenames){
     if ($umi){
         if ($mm){
             $report =~ s/$/.UMI_${mm}mm_deduplication_report.txt/;
-            $detail_report =~ s/$/.detailed_UMI_report.txt/;
+            $detail_report =~ s/$/.UMI_${mm}mm_detailed_UMI_report.txt/;
         }
         else{
             $report =~ s/$/.UMI_deduplication_report.txt/;
-            $detail_report =~ s/$/.detailed_UMI_report.txt/;
+            $detail_report =~ s/$/.UMI_detailed_UMI_report.txt/;
         }
     }
     else{
@@ -322,9 +332,9 @@ foreach my $file (@filenames){
             deduplicate_barcoded_umi($file);
         }
 
-        ### PRINTING DETAILED UMI REPORT
+        ### PRINTING DETAILED UMI REPORT; should only be available for Hi-C data
         if ($detail){
-            detailed_umi_reporting($detail_report,%umi_reporting); 
+            detailed_umi_reporting($detail_report); 
         }
 
     }
@@ -507,6 +517,8 @@ foreach my $file (@filenames){
                         # If neither read combination was found so far, it should be enough to record a single one, e.g. composite1
                         $unique_seqs{$composite1}++;
                     }
+
+                    
                 }
                 else{
             
@@ -900,6 +912,11 @@ sub deduplicate_barcoded_umi{
                     
                     # If neither read combination was found so far, it should be enough to record a single one, e.g. composite1
                     $unique_seqs{$composite1}++;
+                }
+
+                # Optional detailed UMI report
+                if ($detail){
+                    push @{$umi_reporting{$umi_seq}},"${chr_r1}:${start_r1}:::${chr_r2}:${start_r2}";
                 }
             }
             else{
